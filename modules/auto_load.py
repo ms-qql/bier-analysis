@@ -15,7 +15,7 @@ import json
 from io import StringIO
 
 from . import database 
-from . import datatable
+
 from . import matrix_strategy 
 from . import date_time
 from . import auto_load_bmp

@@ -22,7 +22,7 @@ from io import StringIO
 
 from . import matrix_strategy 
 #from . import matrix_bot
-from . import datatable
+
 
 #from modules.database import read_table_from_date 
 
@@ -49,8 +49,8 @@ def update_price_chart(calc_json, signal_strategy, category, risk_weight, market
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition 
   
-  df_categories = datatable.read_categories() # read once for all categories
-  metrics_list, metrics_list_norm = datatable.load_category_list(category, metric='', df=df_categories) 
+  df_categories = database.read_categories() # read once for all categories
+  metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
 
   df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy)
   y_axis_invested = df['invest_score']       
@@ -114,9 +114,9 @@ def update_category_chart(calc_json, signal_strategy, category):
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition 
   
-  df_categories = datatable.read_categories() # read once for all categories
+  df_categories = database.read_categories() # read once for all categories
   #print('Categories DF: ', df_categories, df_categories.columns)
-  df_weights = datatable.read_category_weight_table() # read weights of all categories
+  df_weights = database.read_category_weight_table() # read weights of all categories
   weights = df_weights.iloc[0].values # get weights from the first row  
   #print('Weights DF: ', df_weights, df_weights.columns)
   categories = list(df_weights.columns)
@@ -132,7 +132,7 @@ def update_category_chart(calc_json, signal_strategy, category):
        #print('Position: ', categories.index(category)
        #pos = categories.index(category) # get position to access weight
 
-       metrics_list, metrics_list_norm = datatable.load_category_list(category, metric='', df=df_categories) 
+       metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
        if not metrics_list:
             print(f"Skipping category {category} because it has no metrics.")
             continue
@@ -237,8 +237,8 @@ def update_strategy_chart(calc_json, signal_strategy, risk_weight, market_weight
 
   #df = matrix_strategy.calc_strategy(df, peak_shift, risk_weight, market_weight, mining_weight, macro_weight, sentiment_weight, hodl_weight, shortterm_weight, custom_weight, single_weight)
 
-  df_categories = datatable.read_categories() # read once for all categories
-  metrics_list, metrics_list_norm = datatable.load_category_list(category, metric='', df=df_categories) 
+  df_categories = database.read_categories() # read once for all categories
+  metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
   #print("Metrics Strategy: ", metrics_list_norm)     
 
   df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy)
@@ -311,8 +311,8 @@ def update_category_chart(calc_json, category, signal_strategy=True):
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition  
 
-  df_categories = datatable.read_categories() # read once for all categories
-  metrics_list, metrics_list_norm = datatable.load_category_list(category, metric='', df=df_categories) 
+  df_categories = database.read_categories() # read once for all categories
+  metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
   #print("Metrics Strategy: ", metrics_list_norm) 
 
   matrix = matrix_strategy.matrix_strategy()
@@ -386,8 +386,8 @@ def update_signal_chart(calc_json, signal_strategy, category):
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition  
 
-  df_categories = datatable.read_categories() # read once for all categories
-  metrics_list, metrics_list_norm = datatable.load_category_list(category, metric='', df=df_categories) 
+  df_categories = database.read_categories() # read once for all categories
+  metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
   print("Metrics Signal: ", metrics_list)  
 
   matrix = matrix_strategy.matrix_strategy()
@@ -434,9 +434,9 @@ def update_norm_chart(calc_json, category, raw_data):
 
   matrix = matrix_strategy.matrix_strategy()
 
-  df_categories = datatable.read_categories() # read once for all categories
+  df_categories = database.read_categories() # read once for all categories
 
-  metrics_list, metrics_list_norm = datatable.load_category_list(category, metric='', df=df_categories) 
+  metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
   print("Metrics Norm: ", metrics_list_norm)         
 
   x_axis = df['date']

@@ -867,3 +867,60 @@ def delete_table_last_x_rows_cloud(table_name, number):
 #def upload_itc_table(file, table_name):
   # Functionality removed due to Anvil dependency removal
 #    pass  
+
+# ----------------------------- Category Helper Functions (moved from datatable.py) -----------------------------
+
+def read_categories():
+    """
+    Load metric data from the Postgres table 'bier_categories' and return as a DataFrame.
+    Returns: pandas.DataFrame: DataFrame with categories data.
+    """
+    dict_categories = read_bier_categories()
+    df_categories = pd.DataFrame.from_dict(dict_categories)    
+    if 'id' in df_categories.columns:
+        df_categories = df_categories.drop(columns=['id'])
+    return df_categories  
+
+
+def load_category_list(category: str, metric='', df=None) -> list:
+    """
+    Load the category list from the database and return the metrics for the specified category.
+    
+    Args:
+        category (str): The category to filter by (e.g., 'capriole', 'bmp', etc.)
+        metric (str): Optional metric name for single metric mode
+        df (DataFrame): Optional pre-loaded categories DataFrame
+        
+    Returns:
+        tuple: (category_list, category_norm_list) - Lists of metric names for the specified category
+    """
+    try:
+      category_base = category.split('_')[0]
+    except:
+      category_base = category
+
+    if category_base == 'single': # use single metric
+        category_list = [metric]
+        category_norm_list = [f'{metric}_norm']
+    else:    
+        if df is None:
+          df = read_categories()
+        # Filter and get the metrics where the category column is True
+        df_true = df[df[category] == True]
+        category_list = df_true['metric'].tolist()    
+        category_norm_list = [f"{metric}_norm" for metric in category_list]  
+
+    return category_list, category_norm_list
+
+
+def read_category_weight_table():
+    """
+    Read category weights from the database and return as a DataFrame.
+    Returns: pandas.DataFrame: DataFrame with category weights.
+    """
+    dict_weights = read_bier_category_weight()
+    df_weights = pd.DataFrame.from_dict(dict_weights)    
+    if 'id' in df_weights.columns:
+        df_weights = df_weights.drop(columns=['id'])
+    return df_weights 
+  

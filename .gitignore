@@ -112,4 +112,7 @@ Thumbs.db
 *.csv
 *.params
 *.json
+*.xlsx
+*.xls
+
 

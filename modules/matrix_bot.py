@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime, timezone, timedelta
 
 from . import database 
-from . import datatable
+
 from . import matrix_strategy 
 from . import graphs
 

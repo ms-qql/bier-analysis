@@ -18,7 +18,6 @@ st.set_page_config(page_title="BIER5_AG Strategy Dashboard", layout="wide")
 # Anvil connection removed
 
 from modules import database
-from modules import datatable
 from modules import matrix_strategy
 from modules import graphs
 
@@ -126,8 +125,8 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig):
     df = pd.read_json(StringIO(json_res), orient='records')
     
     # Re-calculate strategy for the selected category to get 'invested' column
-    df_cat, _ = datatable.read_categories(), None
-    metrics_list, _ = datatable.load_category_list(cat_sel, metric='', df=df_cat)
+    df_cat, _ = database.read_categories(), None
+    metrics_list, _ = database.load_category_list(cat_sel, metric='', df=df_cat)
     df = matrix_strategy.calc_multi_strategy(df, 6, metrics_list, use_sig)
     
     return df, json_res

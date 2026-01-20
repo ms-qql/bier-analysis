@@ -12,7 +12,7 @@ from scipy.stats import zscore
 #import yfinance as yf
 
 from . import database 
-from . import datatable
+from . import database
 from . import matrix_bot
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -100,21 +100,21 @@ def calc_metric_all(start_date = "2020-01-01", end_date = "2026-01-01", metric='
                                 'como_spx', 'junk_treasuries', 'weight_node_strategy', 'weight_midas_strategy', 'weight_spectrum_strategy', 'macro_index_eth', 'apparent_demand_eth', 'heater_eth', 'oi_pct_mcap_eth', 'active_more_2y_pct_eth', 
                                 'active_more_1y_pct_eth', 'active_more_6m_pct_eth', 'cdd_trend_eth', 'speculation_index_eth', 'crypto_breadth'] """
 
-    df_categories = datatable.read_categories() # read once for all categories
+    df_categories = database.read_categories() # read once for all categories
     print('DF Categories: ', df_categories.tail(3))
-    metrics_bmp_list, metrics_bmp_full_list_norm = datatable.load_category_list('bmp', metric='', df=df_categories)
+    metrics_bmp_list, metrics_bmp_full_list_norm = database.load_category_list('bmp', metric='', df=df_categories)
     metrics_bmp_full_list = ['date', 'close'] + metrics_bmp_list    
     print("Metrics BMP: ", metrics_bmp_full_list) 
-    metrics_capriole_list, metrics_capriole_full_list_norm = datatable.load_category_list('capriole', metric='', df=df_categories)
+    metrics_capriole_list, metrics_capriole_full_list_norm = database.load_category_list('capriole', metric='', df=df_categories)
     metrics_capriole_full_list = ['date'] + metrics_capriole_list    
     #print("Metrics Capriole: ", metrics_capriole_full_list)     
-    metrics_manta_list, metrics_manta_full_list_norm = datatable.load_category_list('manta', metric='', df=df_categories)
+    metrics_manta_list, metrics_manta_full_list_norm = database.load_category_list('manta', metric='', df=df_categories)
     metrics_manta_full_list = ['date'] + metrics_manta_list    
     print("Metrics Manta: ", metrics_manta_full_list)     
-    metrics_itc_list, metrics_itc_full_list_norm = datatable.load_category_list('itc', metric='', df=df_categories)  
+    metrics_itc_list, metrics_itc_full_list_norm = database.load_category_list('itc', metric='', df=df_categories)  
     metrics_itc_full_list = ['date'] + metrics_itc_list 
     #print("Metrics ITC: ", metrics_itc_full_list)         
-    metrics_tv_list, metrics_tv_full_list_norm = datatable.load_category_list('tv', metric='', df=df_categories)      
+    metrics_tv_list, metrics_tv_full_list_norm = database.load_category_list('tv', metric='', df=df_categories)      
     metrics_tv_full_list = ['date'] + metrics_tv_list
     #print("Metrics TV: ", metrics_tv_full_list)            
     metrics_augmento_full_list = ['date','augmento'] 
@@ -222,7 +222,7 @@ def calc_categories(calc_json, single_metric, metrics_list):
   
   df['close_norm'] = matrix.calc_norm(df['close'], norm_lookback)
 
-  df_categories = datatable.read_categories() # read once for all categories
+  df_categories = database.read_categories() # read once for all categories
   print('DF Categories: ', df_categories.tail(3))  
 
   # Load category lists
@@ -231,26 +231,26 @@ def calc_categories(calc_json, single_metric, metrics_list):
   #category_list = df_categories['category'].unique().tolist()
   print('Categories: ', category_list)    
 
-  custom_cat_list, custom_cat_list_norm = datatable.load_category_list('custom', metric='', df=df_categories)  
-  bier_cat_list, bier_cat_list_norm = datatable.load_category_list('bier', metric='', df=df_categories)   
-  test_cat_list, test_cat_list_norm = datatable.load_category_list('test', metric='', df=df_categories)   
-  capriole_cat_list, capriole_cat_list_norm = datatable.load_category_list('capriole', metric='', df=df_categories)  
-  bmp_cat_list, bmp_cat_list_norm = datatable.load_category_list('bmp', metric='', df=df_categories)
-  manta_cat_list, manta_cat_list_norm = datatable.load_category_list('manta', metric='', df=df_categories)  
-  itc_cat_list, itc_cat_list_norm = datatable.load_category_list('itc', metric='', df=df_categories)  
-  tv_cat_list, tv_cat_list_norm = datatable.load_category_list('tv', metric='', df=df_categories)  
-  bmp_cat_list, bmp_cat_list_norm = datatable.load_category_list('bmp', metric='', df=df_categories)  
-  strategy_cat_list, strategy_cat_list_norm = datatable.load_category_list('strategy', metric='', df=df_categories)
-  market_cat_list, market_cat_list_norm = datatable.load_category_list('market', metric='', df=df_categories)  
-  mining_cat_list, mining_cat_list_norm = datatable.load_category_list('mining', metric='', df=df_categories)
-  macro_cat_list, macro_cat_list_norm = datatable.load_category_list('macro', metric='', df=df_categories)   
-  shortterm_cat_list, shortterm_cat_list_norm = datatable.load_category_list('shortterm', metric='', df=df_categories)
-  sentiment_cat_list, sentiment_cat_list_norm = datatable.load_category_list('sentiment', metric='', df=df_categories)  
-  hodl_cat_list, hodl_cat_list_norm = datatable.load_category_list('hodl', metric='', df=df_categories)
-  treasury_cat_list, treasury_cat_list_norm = datatable.load_category_list('treasury', metric='', df=df_categories)   
-  supply_demand_cat_list, supply_demand_cat_list_norm = datatable.load_category_list('supply_demand', metric='', df=df_categories)
-  eth_cat_list, eth_cat_list_norm = datatable.load_category_list('eth', metric='', df=df_categories)  
-  alts_cat_list, alts_cat_list_norm = datatable.load_category_list('alts', metric='', df=df_categories)  
+  custom_cat_list, custom_cat_list_norm = database.load_category_list('custom', metric='', df=df_categories)  
+  bier_cat_list, bier_cat_list_norm = database.load_category_list('bier', metric='', df=df_categories)   
+  test_cat_list, test_cat_list_norm = database.load_category_list('test', metric='', df=df_categories)   
+  capriole_cat_list, capriole_cat_list_norm = database.load_category_list('capriole', metric='', df=df_categories)  
+  bmp_cat_list, bmp_cat_list_norm = database.load_category_list('bmp', metric='', df=df_categories)
+  manta_cat_list, manta_cat_list_norm = database.load_category_list('manta', metric='', df=df_categories)  
+  itc_cat_list, itc_cat_list_norm = database.load_category_list('itc', metric='', df=df_categories)  
+  tv_cat_list, tv_cat_list_norm = database.load_category_list('tv', metric='', df=df_categories)  
+  bmp_cat_list, bmp_cat_list_norm = database.load_category_list('bmp', metric='', df=df_categories)  
+  strategy_cat_list, strategy_cat_list_norm = database.load_category_list('strategy', metric='', df=df_categories)
+  market_cat_list, market_cat_list_norm = database.load_category_list('market', metric='', df=df_categories)  
+  mining_cat_list, mining_cat_list_norm = database.load_category_list('mining', metric='', df=df_categories)
+  macro_cat_list, macro_cat_list_norm = database.load_category_list('macro', metric='', df=df_categories)   
+  shortterm_cat_list, shortterm_cat_list_norm = database.load_category_list('shortterm', metric='', df=df_categories)
+  sentiment_cat_list, sentiment_cat_list_norm = database.load_category_list('sentiment', metric='', df=df_categories)  
+  hodl_cat_list, hodl_cat_list_norm = database.load_category_list('hodl', metric='', df=df_categories)
+  treasury_cat_list, treasury_cat_list_norm = database.load_category_list('treasury', metric='', df=df_categories)   
+  supply_demand_cat_list, supply_demand_cat_list_norm = database.load_category_list('supply_demand', metric='', df=df_categories)
+  eth_cat_list, eth_cat_list_norm = database.load_category_list('eth', metric='', df=df_categories)  
+  alts_cat_list, alts_cat_list_norm = database.load_category_list('alts', metric='', df=df_categories)  
   print('Market Metrics: ', market_cat_list_norm)
   print('Macro Metrics: ', macro_cat_list_norm)
   print('Shortterm Metrics: ', shortterm_cat_list_norm)  
@@ -511,14 +511,14 @@ class matrix_strategy():
       sl = self.calc_stop_loss(df, direction, sl_pct)
       print('Stop Loss Long: ', sl)
       trailing_sl = self.calc_initial_trailing_sl(df, direction, nb_atr)
-      datatable.delete_risk_mgmt_table('btc')      
-      datatable.initial_row_risk_mgmt('btc', sl, trailing_sl)   
+      database.delete_risk_mgmt_table('btc')      
+      database.initial_row_risk_mgmt('btc', sl, trailing_sl)   
       return
       
     def update_trailing_sl(self, df, direction, nb_atr: int = 14):
       close = df['close'].iloc[-1]
       atr_sl = self.calc_atr(df) * nb_atr
-      trade_sl = datatable.read_trailing_sl('btc')
+      trade_sl = database.read_trailing_sl('btc')
       #print(f"ATR SL: {atr_sl}, Trade SL: {trade_sl} ")
       if direction == 'short':
         trailing_sl = min(close + atr_sl, trade_sl)
@@ -528,8 +528,8 @@ class matrix_strategy():
       trail_sl_calc = close - atr_sl
       print(f'existing Trail-SL: {trade_sl}, close: {close}, atr_sl: {atr_sl} --> calc TSL: {trail_sl_calc}')
       if trailing_sl != trade_sl:
-        sl = datatable.read_sl('btc')# read sl value
-        datatable.update_risk_mgmt_table('btc', sl, trailing_sl)
+        sl = database.read_sl('btc')# read sl value
+        database.update_risk_mgmt_table('btc', sl, trailing_sl)
       return trailing_sl
 
     def hull_ma(self, src, ma_length):
@@ -724,8 +724,8 @@ def store_strategy(start_date, end_date, metric, asset, category, signal_strateg
     calc_json = calc_metric_all(start_date, end_date, metric, asset) 
     df = pd.read_json(StringIO(calc_json), orient='records') 
     
-    df_categories = datatable.read_categories() # read once for all categories
-    metrics_list, metrics_list_norm = datatable.load_category_list(category, metric='', df=df_categories) 
+    df_categories = database.read_categories() # read once for all categories
+    metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
 
     df = calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy)
 

@@ -11,7 +11,7 @@ from backtesting.test import SMA, GOOG
 from backtesting.lib import TrailingStrategy
 
 from . import matrix_strategy 
-from . import datatable
+
 
 
 
@@ -56,8 +56,8 @@ def save_backtest_score(calc_json, asset, use_signal, category, risk_weight, mar
   peak_shift = 1 # Shift peak by x bars to reflect delayed peak recognition 
   #scores_list = ['nvts', 'mvrv','reserve_risk','rhodl_ratio','nupl', 'macro_index']
   
-  df_categories = datatable.read_categories() # read once for all categories
-  metrics_list, metrics_list_norm = datatable.load_category_list(category, metric='', df=df_categories) 
+  df_categories = database.read_categories() # read once for all categories
+  metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
   print("Metrics Signal: ", metrics_list)  
   
   df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list, use_signal)
