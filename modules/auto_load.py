@@ -9,6 +9,7 @@ import datetime
 from datetime import datetime, timezone, timedelta
 import numpy as np
 import pandas as pd
+import os
 import requests
 import http.client
 import json
@@ -1143,7 +1144,9 @@ def store_bier_result(calc_json, signal_strategy, category, risk_weight, market_
   
   df = matrix_strategy.calc_multi_strategy(df, peak_shift, scores_list, signal_strategy)    
   #print('Price Graph: ', df.tail(10), df.info())
-  df.to_csv('store_bier.csv')
+  df = df.replace([np.inf, -np.inf], 0)
+  os.makedirs('data', exist_ok=True)
+  df.to_csv('data/store_bier.csv')
   df_bier = df[['date', 'close', 'invested', 'range']].fillna(0)
   try:
     df_bier.rename(columns ={'invested': 'bier_invested', 'range': 'bier_range'}, inplace = True)

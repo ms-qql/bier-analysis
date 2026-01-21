@@ -140,8 +140,9 @@ def auto_import_bmp_data():
     df = df.drop('time', axis=1)    
     df = df.fillna(method='ffill')
     # Dropping last row using drop
-    df.drop(df.tail(1).index, inplace = True)
-    df.to_csv('bmp_data.csv')
+    df = df.replace([np.inf, -np.inf], 0)
+    os.makedirs('data', exist_ok=True)
+    df.to_csv('data/bmp_data.csv')
     print('BMP: ', df.info())
 
     # add imported data to database

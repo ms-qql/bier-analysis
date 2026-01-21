@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime, date, timedelta, timezone
 import math
 import time
+import os
 from io import StringIO
 from scipy.signal import find_peaks, savgol_filter
 #from findpeaks import findpeaks
@@ -45,6 +46,76 @@ def calc_ohlc(df):
     except:
       pass 
     return df
+
+def calc_performance(df):
+    """Calculate Equity and Drawdown for Strategy vs Buy & Hold"""
+    df = df.copy()
+    try:
+        df['date'] = pd.to_datetime(df['date'])
+    except:
+        pass
+    df = df.sort_values('date')
+    
+    # Drop rows where close is NaN (e.g., incomplete future dates)
+    df = df.dropna(subset=['close'])
+    
+    # Buy & Hold Equity (normalized to 100 at start)
+    df['bh_equity'] = 100 * (df['close'] / df['close'].iloc[0])
+    
+    # Strategy Equity
+    # We assume we are in BTC when invested == 1, else in cash (flat)
+    df['returns'] = df['close'].pct_change().fillna(0)
+    df['strat_returns'] = np.where(df['invested'].shift(1) == 1, df['returns'], 0)
+    df['strat_equity'] = 100 * (1 + df['strat_returns']).cumprod()
+    
+    # Drawdowns
+    df['bh_dd'] = (df['bh_equity'] / df['bh_equity'].cummax() - 1) * 100
+    df['strat_dd'] = (df['strat_equity'] / df['strat_equity'].cummax() - 1) * 100
+    
+    # Calculate additional metrics
+    # Annualization factor (assuming daily data)
+    days = (df['date'].iloc[-1] - df['date'].iloc[0]).days
+    years = days / 365.25
+    
+    # Strategy metrics
+    strat_total_return = (df['strat_equity'].iloc[-1] / 100 - 1)
+    strat_ann_return = (1 + strat_total_return) ** (1 / years) - 1 if years > 0 else 0
+    strat_volatility = df['strat_returns'].std() * np.sqrt(252)  # Annualized volatility
+    strat_downside_returns = df['strat_returns'][df['strat_returns'] < 0]
+    strat_downside_dev = strat_downside_returns.std() * np.sqrt(252) if len(strat_downside_returns) > 0 else 0.0001
+    strat_max_dd = abs(df['strat_dd'].min())
+    
+    # Buy & Hold metrics
+    bh_total_return = (df['bh_equity'].iloc[-1] / 100 - 1)
+    bh_ann_return = (1 + bh_total_return) ** (1 / years) - 1 if years > 0 else 0
+    bh_volatility = df['returns'].std() * np.sqrt(252)  # Annualized volatility
+    bh_downside_returns = df['returns'][df['returns'] < 0]
+    bh_downside_dev = bh_downside_returns.std() * np.sqrt(252) if len(bh_downside_returns) > 0 else 0.0001
+    bh_max_dd = abs(df['bh_dd'].min())
+    
+    # Calculate ratios
+    strat_sharpe = strat_ann_return / strat_volatility if strat_volatility > 0 else 0
+    bh_sharpe = bh_ann_return / bh_volatility if bh_volatility > 0 else 0
+    
+    strat_sortino = strat_ann_return / strat_downside_dev if strat_downside_dev > 0 else 0
+    bh_sortino = bh_ann_return / bh_downside_dev if bh_downside_dev > 0 else 0
+    
+    strat_calmar = (strat_ann_return * 100) / strat_max_dd if strat_max_dd > 0 else 0
+    bh_calmar = (bh_ann_return * 100) / bh_max_dd if bh_max_dd > 0 else 0
+    
+    # Store metrics in a dictionary
+    metrics = {
+        'strat_sharpe': strat_sharpe,
+        'bh_sharpe': bh_sharpe,
+        'strat_sortino': strat_sortino,
+        'bh_sortino': bh_sortino,
+        'strat_calmar': strat_calmar,
+        'bh_calmar': bh_calmar,
+        'strat_max_dd': strat_max_dd,
+        'bh_max_dd': bh_max_dd
+    }
+    
+    return df, metrics
  
 
 def calc_metric(start_date = "2020-01-01", end_date = "2026-01-01", metric='risk_level'):  
@@ -155,7 +226,8 @@ def calc_metric_all(start_date = "2020-01-01", end_date = "2026-01-01", metric='
     all_metrics_list = metrics_bmp_full_list[1:] + metrics_capriole_list + metrics_itc_list + metrics_manta_list + metrics_tv_list + metrics_augmento_full_list[1:] + ['roi', 'liquidity_change', 'nvt_combi', 'realized_price_delta_sth','active_ratio','realized_price_ratio'] # All metrics without date    
 
     print('DF_Strategy: ', df.tail(5))#, df.info())  
-    df.to_csv('strategy.csv')
+    os.makedirs('data', exist_ok=True)
+    df.to_csv('data/strategy.csv')
     #print('DF Calc: ', df[['date', 'close']], df.info())   
 
     df = calc_categories(df.to_json(), metric, all_metrics_list)
@@ -177,10 +249,13 @@ def calc_metric_all(start_date = "2020-01-01", end_date = "2026-01-01", metric='
       norm_name = metric + '_norm'
       df[norm_name] = matrix.calc_norm(df[metric], norm_lookback)       
     df = calc_ohlc(df)       
-    print('ITC: ', df) #, df.info())    
-    df.to_csv('strategy.csv')       
+    df = df.fillna(0)
+    #df = df.replace([np.inf, -np.inf], 0)
+    os.makedirs('data', exist_ok=True)
+    df.to_csv('data/strategy.csv')       
 
   return df.to_json()
+
 
 def calc_categories(calc_json, single_metric, metrics_list):  
   df = pd.read_json(calc_json, orient='records') 
@@ -341,9 +416,11 @@ def calc_single_strategy(df_single, peak_shift, metric):
   df_single['extremes'].replace(0, np.nan, inplace=True)
   df_single['extremes'] = df_single['extremes'].ffill(axis ='rows')  
   df_single[invest_name] = np.where((df_single['extremes'] < 0), 1, np.nan)
-  df_single[invest_name] = df_single[invest_name] #.fillna(0)
-  #print('DF_Single: ', df_single) #, df_single.info())
-  df_single.to_csv(f'calc_single_strategy_{metric}.csv')  
+  df_single[invest_name] 
+  df_single['trigger_short'] = df_single['peaks']
+  df_single['trigger_long'] = df_single['valleys']
+  os.makedirs('data', exist_ok=True)
+  df_single.to_csv(f'data/calc_single_strategy_{metric}.csv')  
   
   return df_single
 
@@ -406,8 +483,10 @@ def calc_multi_strategy(df, peak_shift, scores_list, use_signal=True):
     df['extremes'] = df['extremes'].ffill(axis ='rows') 
     df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)    
 
-  print('DF_Multi: ', df) #, df.info())
-  df.to_csv('calc_multi_strategy.csv')   
+  df['trigger_short'] = df['peaks']
+  df['trigger_long'] = df['valleys']
+  os.makedirs('data', exist_ok=True)
+  df.to_csv('data/calc_multi_strategy.csv')   
 
   return df
 
@@ -730,6 +809,8 @@ def store_strategy(start_date, end_date, metric, asset, category, signal_strateg
     df = calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy)
 
     df_bier = df[['date', 'close', 'invest_score', 'peaks', 'valleys', 'extremes', 'invested']].copy()
-    df_bier.to_csv('bier_strategy.csv')
+    df_bier = df_bier.fillna(0)
+    os.makedirs('data', exist_ok=True)
+    df_bier.to_csv('data/bier_strategy.csv')
     database.store_metric_table(df_bier, 'bier2') # store calculated metrics in database  
-    print('Bier strategy stored: ', df_bier.tail(3)) #, df_bier.info())    
+    print('Bier strategy stored: ', df_bier.tail(3)) #, df_bier.info())

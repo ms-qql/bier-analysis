@@ -729,6 +729,35 @@ def read_bier_category_weight():
             return list_dicts
 
 
+def get_all_metrics():
+    """
+    Get list of all unique metrics from bier_categories table.
+    Returns: list: List of all metric names.
+    """
+    df = read_categories()
+    return sorted(df['metric'].tolist())
+
+
+def update_custom_metrics(selected_metrics):
+    """
+    Update the 'custom' column in bier_categories table.
+    Set to 1 for selected metrics, 0 for all others.
+    
+    Args:
+        selected_metrics (list): List of metric names to mark as custom
+    """
+    with connection:
+        with connection.cursor() as cursor:
+            # First, set all custom values to 0
+            cursor.execute("UPDATE bier_categories SET custom = 0;")
+            
+            # Then set selected metrics to 1
+            if selected_metrics:
+                placeholders = ','.join(['%s'] * len(selected_metrics))
+                query = f"UPDATE bier_categories SET custom = 1 WHERE metric IN ({placeholders});"
+                cursor.execute(query, tuple(selected_metrics))
+    return
+
 
 
 

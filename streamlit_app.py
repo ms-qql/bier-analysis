@@ -34,66 +34,9 @@ st.markdown("""
 
 # --- Support Functions ---
 
-def calc_performance(df):
-    """Calculate Equity and Drawdown for Strategy vs Buy & Hold"""
-    df = df.copy()
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values('date')
-    
-    # Drop rows where close is NaN (e.g., incomplete future dates)
-    df = df.dropna(subset=['close'])
-    
-    # Buy & Hold Equity (normalized to 100 at start)
-    df['bh_equity'] = 100 * (df['close'] / df['close'].iloc[0])
-    
-    # Strategy Equity
-    # We assume we are in BTC when invested == 1, else in cash (flat)
-    df['returns'] = df['close'].pct_change().fillna(0)
-    df['strat_returns'] = np.where(df['invested'].shift(1) == 1, df['returns'], 0)
-    df['strat_equity'] = 100 * (1 + df['strat_returns']).cumprod()
-    
-    # Drawdowns
-    df['bh_dd'] = (df['bh_equity'] / df['bh_equity'].cummax() - 1) * 100
-    df['strat_dd'] = (df['strat_equity'] / df['strat_equity'].cummax() - 1) * 100
-    
-    return df
 
-def create_radar_chart(df, categories):
-    """Create a radar chart of current category scores"""
-    # Get latest values for the selected categories
-    latest = df.iloc[-1]
-    
-    # Since we don't have per-category score columns directly in the main df easily,
-    # we'll approximate using the 'invest_score' if it was run for that category.
-    # For a real radar, we would need to run calc_multi_strategy for each category.
-    # For now, let's just use placeholder logic or a subset if available.
-    
-    # Better approach: If we are showing 'bier', we can show the contributors.
-    contributors = ['market', 'mining', 'macro', 'sentiment', 'hodl', 'supply_demand']
-    values = []
-    
-    # This is a simplification for the demo. In a full version, we'd pre-calculate these.
-    for cat in contributors:
-        # Placeholder: using a random variation of invest_score for visualization
-        # In production, replace with actual category scores
-        val = latest.get('invest_score', 50) * (0.8 + 0.4 * np.random.rand())
-        values.append(min(100, max(0, val)))
-        
-    fig = go.Figure(data=go.Scatterpolar(
-      r=values,
-      theta=contributors,
-      fill='toself',
-      name='Current Regime'
-    ))
 
-    fig.update_layout(
-      polar=dict(
-        radialaxis=dict(visible=True, range=[0, 100])
-      ),
-      showlegend=False,
-      title="Current Regime Health"
-    )
-    return fig
+
 
 # --- Sidebar Controls ---
 st.sidebar.title("BIER Controls")
@@ -114,18 +57,51 @@ category_sel = st.sidebar.selectbox("Select Category / Strategy", available_cate
 show_raw_data = st.sidebar.checkbox("Show Raw Data", value=False)
 signal_strategy = st.sidebar.checkbox("Use Signal Strategy", value=True)
 
+# Custom metric selector (shown only when custom category is selected)
+custom_metrics = []
+if category_sel == 'custom':
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Custom Metrics Selection")
+    
+    # Get all available metrics
+    all_metrics = database.get_all_metrics()
+    
+    # Get currently selected custom metrics from database
+    df_cat = database.read_categories()
+    current_custom = df_cat[df_cat['custom'] == 1]['metric'].tolist()
+    
+    # Multi-select widget
+    custom_metrics = st.sidebar.multiselect(
+        "Select Metrics",
+        options=all_metrics,
+        default=current_custom,
+        help="Select metrics to include in custom strategy"
+    )
+    
+    # Store Custom button
+    if st.sidebar.button("Store Custom", type="secondary"):
+        database.update_custom_metrics(custom_metrics)
+        st.sidebar.success("Custom metrics saved!")
+        st.rerun()
+
 # Update Button
 update_graphs = st.sidebar.button("UPDATE DASHBOARD", type="primary")
 
 # --- Data Loading ---
 @st.cache_data(ttl=3600)
-def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig):
+def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, custom_metrics_list=None):
     # This calls the existing matrix_strategy logic
     json_res = matrix_strategy.calc_metric_all(start_str, end_str, "risk_level", asset_name)
     df = pd.read_json(StringIO(json_res), orient='records')
     
     # Re-calculate strategy for the selected category to get 'invested' column
     df_cat, _ = database.read_categories(), None
+    
+    # If custom category and metrics provided, temporarily update the dataframe
+    if cat_sel == 'custom' and custom_metrics_list:
+        # Temporarily modify df_cat for this calculation
+        df_cat['custom'] = df_cat['metric'].isin(custom_metrics_list).astype(int)
+    
     metrics_list, _ = database.load_category_list(cat_sel, metric='', df=df_cat)
     df = matrix_strategy.calc_multi_strategy(df, 6, metrics_list, use_sig)
     
@@ -142,22 +118,26 @@ if update_graphs or 'data_loaded' not in st.session_state:
         end_str = end_date.strftime('%Y-%m-%d')
         
         # Load and process data
-        df, calc_json = load_and_process_data(start_str, end_str, asset, category_sel, signal_strategy)
-        df_perf = calc_performance(df)
+        df, calc_json = load_and_process_data(
+            start_str, end_str, asset, category_sel, signal_strategy, 
+            custom_metrics if category_sel == 'custom' else None
+        )
+        df_perf, metrics = matrix_strategy.calc_performance(df)
         
         # --- KPI SECTION ---
         st.markdown("### Strategy Performance Summary")
-        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
         
         strat_final = df_perf['strat_equity'].iloc[-1]
         bh_final = df_perf['bh_equity'].iloc[-1]
         strat_ret = strat_final - 100
         bh_ret = bh_final - 100
         
-        kpi1.metric("Strategy Return", f"{strat_ret:.1f}%", f"{strat_ret - bh_ret:.1f}% vs B&H")
-        kpi2.metric("Buy & Hold Return", f"{bh_ret:.1f}%")
-        kpi3.metric("Max Drawdown (Strat)", f"{df_perf['strat_dd'].min():.1f}%")
-        kpi4.metric("Max Drawdown (B&H)", f"{df_perf['bh_dd'].min():.1f}%")
+        kpi1.metric("Strategy Return", f"{strat_ret:.1f}%", f"B&H: {bh_ret:.1f}%")
+        kpi2.metric("Max Drawdown", f"{metrics['strat_max_dd']:.1f}%", f"B&H: {metrics['bh_max_dd']:.1f}%")
+        kpi3.metric("Sharpe Ratio", f"{metrics['strat_sharpe']:.2f}", f"B&H: {metrics['bh_sharpe']:.2f}")
+        kpi4.metric("Sortino Ratio", f"{metrics['strat_sortino']:.2f}", f"B&H: {metrics['bh_sortino']:.2f}")
+        kpi5.metric("Calmar Ratio", f"{metrics['strat_calmar']:.2f}", f"B&H: {metrics['bh_calmar']:.2f}")
         
         st.markdown("---")
 
@@ -173,7 +153,8 @@ if update_graphs or 'data_loaded' not in st.session_state:
                 st.plotly_chart(pio.from_json(price_chart_json), use_container_width=True, key="price_chart")
             with col_right:
                 st.subheader("Regime Health")
-                st.plotly_chart(create_radar_chart(df, available_categories), use_container_width=True, key="radar_chart")
+                radar_json = graphs.create_radar_chart(df, available_categories)
+                st.plotly_chart(pio.from_json(radar_json), use_container_width=True, key="radar_chart")
 
             # Row 2: Equity & Drawdown side-by-side
             col_eq, col_dd = st.columns(2)

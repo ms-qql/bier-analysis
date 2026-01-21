@@ -475,3 +475,43 @@ def update_norm_chart(calc_json, category, raw_data):
   fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='silver',zeroline=True, zerolinewidth=2, zerolinecolor='silver')
 
   return fig.to_json() 
+
+def create_radar_chart(df, categories):
+    """Create a radar chart of current category scores"""
+    # Get latest values for the selected categories
+    latest = df.iloc[-1]
+    
+    # Since we don't have per-category score columns directly in the main df easily,
+    # we'll approximate using the 'invest_score' if it was run for that category.
+    # For a real radar, we would need to run calc_multi_strategy for each category.
+    # For now, let's just use placeholder logic or a subset if available.
+    
+    # Better approach: If we are showing 'bier', we can show the contributors.
+    contributors = ['market', 'mining', 'macro', 'sentiment', 'hodl', 'supply_demand']
+    values = []
+    
+    # This is a simplification for the demo. In a full version, we'd pre-calculate these.
+    for cat in contributors:
+        # Placeholder: using a random variation of invest_score for visualization
+        # In production, replace with actual category scores
+        val = latest.get('invest_score', 50) * (0.8 + 0.4 * np.random.rand())
+        values.append(min(100, max(0, val)))
+        
+    fig = go.Figure(data=go.Scatterpolar(
+      r=values,
+      theta=contributors,
+      fill='toself',
+      name='Current Regime'
+    ))
+
+    fig.update_layout(
+      polar=dict(
+        radialaxis=dict(visible=True, range=[0, 100]),
+        bgcolor='rgba(0,0,0,0)'
+      ),
+      showlegend=False,
+      title="Current Regime Health",
+      paper_bgcolor='rgba(0,0,0,0)',
+      plot_bgcolor='rgba(0,0,0,0)'
+    )
+    return fig.to_json() 

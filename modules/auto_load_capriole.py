@@ -12,6 +12,7 @@ import pandas as pd
 import requests
 import http.client
 import json
+import os
 from io import StringIO
 from urllib.parse import urlparse, parse_qs, urlencode, quote
 from typing import Dict, Any, Optional
@@ -508,7 +509,9 @@ def auto_import_capriole_data():
   df_capriole['date'] = df_capriole['date'].dt.strftime('%Y-%m-%d')
   df_capriole = df_capriole.fillna(method='ffill')
   print('DF Capriole: ', df_capriole.tail(), df_capriole.info()) 
-  df_capriole.to_csv('capriole_data.csv')
+  df_capriole = df_capriole.replace([np.inf, -np.inf], 0)
+  os.makedirs('data', exist_ok=True)
+  df_capriole.to_csv('data/capriole_data.csv')
   
   # add imported data to database
   database.store_metric_table(df_capriole, 'capriole2')
