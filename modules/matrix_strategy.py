@@ -435,6 +435,8 @@ def calc_multi_strategy(df, peak_shift, scores_list, use_signal=True):
     else:
         df['strategy'] = 0
     df['invest_score'] = matrix.double_hull_ma(df['strategy'], 5, 5) 
+    # Clamp invest_score to 0-100 range (double_hull_ma can overshoot)
+    df['invest_score'] = df['invest_score'].clip(lower=0, upper=100)
     df = calc_peaks_valleys(df, 'invest_score', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)   
     df['extremes'] = df['peaks'].shift(peak_shift).fillna(0) - df['valleys'].shift(peak_shift).fillna(0)
     df['extremes'].replace(0, np.nan, inplace=True)

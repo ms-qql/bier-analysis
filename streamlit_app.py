@@ -50,7 +50,7 @@ with col2:
 
 # Selection Options
 asset = st.sidebar.selectbox("Select Asset", ["BTC", "ETH"], index=0)
-available_categories = ['capriole', 'bmp', 'manta', 'itc', 'tv', 'strategy', 'market', 'mining', 'macro', 'shortterm', 'sentiment', 'hodl', 'treasury', 'supply_demand', 'eth', 'alts', 'custom', 'bier', 'test']
+available_categories = ['all_categories', 'capriole', 'bmp', 'manta', 'itc', 'tv', 'strategy', 'market', 'mining', 'macro', 'shortterm', 'sentiment', 'hodl', 'treasury', 'supply_demand', 'eth', 'alts', 'custom', 'bier', 'test']
 category_sel = st.sidebar.selectbox("Select Category / Strategy", available_categories, index=available_categories.index('bier'))
 
 # Toggles
@@ -97,13 +97,56 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, cust
     # Re-calculate strategy for the selected category to get 'invested' column
     df_cat, _ = database.read_categories(), None
     
+    # Handle all_categories: calculate weighted total score
+    if cat_sel == 'all_categories':
+        # Read category weights
+        df_weights = database.read_category_weight_table()
+        weights = df_weights.iloc[0]
+        
+        # Calculate score for each category and combine with weights
+        weighted_sum = pd.Series(0.0, index=df.index)
+        total_weight = 0
+        
+        for category in df_weights.columns:
+            weight = weights[category]
+            if weight > 0:
+                metrics_list, _ = database.load_category_list(category, metric='', df=df_cat)
+                if metrics_list:
+                    df_temp = matrix_strategy.calc_multi_strategy(df.copy(), 6, metrics_list, use_sig)
+                    weighted_sum += df_temp['invest_score'] * weight
+                    total_weight += weight
+        
+        # Calculate weighted average
+        df['invest_score'] = weighted_sum / total_weight if total_weight > 0 else 0
+        
+        # Calculate invested signal from the weighted score
+        df['invest_score_ma'] = matrix_strategy.matrix_strategy().double_hull_ma(df['invest_score'], 5, 5)
+        df = matrix_strategy.calc_peaks_valleys(df, 'invest_score_ma', peak_min=50, vert_dist=0, peak_dist=2, peak_width=0, peak_prominence=10, filt_double_extremes=False)
+        df['extremes'] = df['peaks'].shift(6).fillna(0) - df['valleys'].shift(6).fillna(0)
+        df['extremes'] = df['extremes'].replace(0, np.nan)
+        df['extremes'] = df['extremes'].ffill(axis='rows')
+        df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
+        
+        # Add range column (for signal strategy compatibility)
+        df['range'] = np.where((df['invest_score'] == 50), 1, np.nan)
+        
+        # Add trigger columns
+        df['trigger_short'] = df['peaks']
+        df['trigger_long'] = df['valleys']
+        
     # If custom category and metrics provided, temporarily update the dataframe
-    if cat_sel == 'custom' and custom_metrics_list:
+    elif cat_sel == 'custom' and custom_metrics_list:
         # Temporarily modify df_cat for this calculation
         df_cat['custom'] = df_cat['metric'].isin(custom_metrics_list).astype(int)
+        metrics_list, _ = database.load_category_list(cat_sel, metric='', df=df_cat)
+        df = matrix_strategy.calc_multi_strategy(df, 6, metrics_list, use_sig)
+    else:
+        metrics_list, _ = database.load_category_list(cat_sel, metric='', df=df_cat)
+        df = matrix_strategy.calc_multi_strategy(df, 6, metrics_list, use_sig)
     
-    metrics_list, _ = database.load_category_list(cat_sel, metric='', df=df_cat)
-    df = matrix_strategy.calc_multi_strategy(df, 6, metrics_list, use_sig)
+    # Update json_res to include the calculated invest_score for all_categories and custom
+    if cat_sel == 'all_categories' or cat_sel == 'custom':
+        json_res = df.to_json(orient='records')
     
     return df, json_res
 
@@ -153,7 +196,7 @@ if update_graphs or 'data_loaded' not in st.session_state:
                 st.plotly_chart(pio.from_json(price_chart_json), width='stretch', key="price_chart")
             with col_right:
                 st.subheader("Regime Health")
-                radar_json = graphs.create_radar_chart(df, available_categories)
+                radar_json = graphs.create_radar_chart(calc_json, available_categories, signal_strategy)
                 st.plotly_chart(pio.from_json(radar_json), width='stretch', key="radar_chart")
 
             # Row 2: Equity & Drawdown side-by-side
@@ -185,7 +228,7 @@ if update_graphs or 'data_loaded' not in st.session_state:
 
         with tab3:
             st.subheader("Individual Strategy Signals")
-            signal_chart_json = graphs.update_signal_chart(calc_json, signal_strategy, category_sel)
+            signal_chart_json = graphs.update_signal_chart(calc_json, signal_strategy, category_sel, custom_metrics if category_sel == 'custom' else None, show_raw_data)
             st.plotly_chart(pio.from_json(signal_chart_json), width='stretch', height=800, key="sig_chart")
 
 st.sidebar.markdown("---")
