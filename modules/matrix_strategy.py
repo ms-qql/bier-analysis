@@ -137,51 +137,28 @@ def calc_metric_all(start_date = "2020-01-01", end_date = "2026-01-01", metric='
   matrix = matrix_strategy()
 
   if asset.lower() == 'btc':
+    # Load Data
     df_itc = database.read_table_date_range_cloud('itc', start_date, end_date)  
     df_capriole = database.read_table_date_range_cloud('capriole2', start_date, end_date) 
-    #print('DF Capriole:', df_capriole.info())  
-    #print(df_capriole.tail()) #.to_string())
-    #df_bmp = database.read_table_date_range_cloud('bmp', start_date, end_date)
     df_bmp_full = database.read_table_date_range_cloud('bmp2', start_date, end_date)  
-    #print('DF BMP_Full:')  
-    #print(df_bmp_full.tail().to_string())
-    #df_bmp_full.to_csv('bmp_full.csv')
     df_manta = database.read_table_date_range_cloud('manta', start_date, end_date)
     df_manta.rename(columns = {'mi_correlation_norm' : 'correlation', 'mi_low_beta_norm' : 'beta'}, inplace = True)  
     df_manta['funding_rate_all'] = 50 + df_manta['funding_pos']/2 - df_manta['funding_neg']/2
-    df_augmento = database.read_table_date_range_cloud('augmento', start_date, end_date)  
-    #df_hyblock = database.read_table_date_range_cloud('hyblock', start_date, end_date) 
-    #df_etf = database.read_table_date_range_cloud('etf', start_date, end_date) 
-    #df_etf['flow'] = df_etf['flow'].replace(0, pd.NA).ffill() # replace NA from weekend values with previous days' value
-    #df_etf.rename(columns = {'flow' : 'etf_flow'}, inplace = True)   
+    df_augmento = database.read_table_date_range_cloud('augmento', start_date, end_date)   
     df_tv = database.read_table_date_range_cloud('macro', start_date, end_date)
-    df_tv.rename(columns = {'pmi_norm' : 'pmi', 'dxy_norm' : 'dxy', 'liq_norm' : 'liquidity_tv', 'dfg_norm' : 'dfg', 'usdt_dom_norm' : 'usdt_dom'}, inplace = True)      
-    print('Macro: ', df_tv.tail(3))      
-
-
-    #metrics_bmp_list = ['date','close','nupl', 'sopr', 'mvrv', 'liquidity', 'reserve_risk', 'bitcoin_sentiment', 'addresses_in_profit', 'rhodl_ratio', 'miner_fee_pct', 'realized_price_sth', 'sth_supply', 'vdd_multiple', 'fear_greed']
-    """metrics_bmp_full_list = ['date', 'close', 'nupl', 'sopr', 'mvrv', 'liquidity', 'reserve_risk', 'bitcoin_sentiment', 'addresses_in_profit',
-                    'rhodl_ratio', 'miner_fee_pct', 'realized_price_sth','sth_supply',  'vdd_multiple', 'fear_greed', 'funding_rate', 'nvt', 'sth_mvrv',
-                    'lth_mvrv','financial_stress', 'high_yield_credit', 'm2_yoy_change', 'yield_spread', 'btc_etf_flows', 'cycle_capital_flows', 'bitcoin_cycle_master',
-                    'onchain_prediction', 'realized_price_lth', 'pi_cycle_oscillator',  'everything_indicator'] 
-    metrics_capriole_list = ['date','macro_index', 'heater', 'oi_pct_mcap', 'nvts', 'production_cost', 'miner_margin', 'supply_delta', 'cdd_trend', 'apparent_demand', 
-                                'energy_value', 'active_more_2y_percent', 'active_more_1y_percent', 'active_more_6m_percent', 'lth_supply_percent', 'yardstick', 'institutional_buying_excess', 'mnav_enterprise_mean', 'treasury_cvd_Z', 'buy_sell_ratio_roc',
-                                'companies_buying_per_day', 'ave_debt_to_equity', 'ave_debt_to_enterprise_value', 'ave_debt_to_bitcoin_treasury', 'yield_mean', 'days_cover_enterprise_mean', 'sentiment_spread', 'active_manager_sentiment', 'business_outlook', 'equity_fear_greed', 
-                                'equity_premium', 'm2_yoy_less_rates', 'gsr', 'insider_trades', 'market_breadth', 'sp_pcr', 'us_liquidity_yoy', 'usd_positioning', 'bbb_credit_spread', 'xly_xlp', 
-                                'como_spx', 'junk_treasuries', 'weight_node_strategy', 'weight_midas_strategy', 'weight_spectrum_strategy', 'macro_index_eth', 'apparent_demand_eth', 'heater_eth', 'oi_pct_mcap_eth', 'active_more_2y_pct_eth', 
-                                'active_more_1y_pct_eth', 'active_more_6m_pct_eth', 'cdd_trend_eth', 'speculation_index_eth', 'crypto_breadth'] """
+    df_tv.rename(columns = {'pmi_norm' : 'pmi', 'dxy_norm' : 'dxy', 'liq_norm' : 'liquidity_tv', 'dfg_norm' : 'dfg', 'usdt_dom_norm' : 'usdt_dom'}, inplace = True)       
 
     df_categories = database.read_categories() # read once for all categories
-    print('DF Categories: ', df_categories.tail(3))
+    #print('DF Categories: ', df_categories.tail(3))
     metrics_bmp_list, metrics_bmp_full_list_norm = database.load_category_list('bmp', metric='', df=df_categories)
     metrics_bmp_full_list = ['date', 'close'] + metrics_bmp_list    
-    print("Metrics BMP: ", metrics_bmp_full_list) 
+    #print("Metrics BMP: ", metrics_bmp_full_list) 
     metrics_capriole_list, metrics_capriole_full_list_norm = database.load_category_list('capriole', metric='', df=df_categories)
     metrics_capriole_full_list = ['date'] + metrics_capriole_list    
     #print("Metrics Capriole: ", metrics_capriole_full_list)     
     metrics_manta_list, metrics_manta_full_list_norm = database.load_category_list('manta', metric='', df=df_categories)
     metrics_manta_full_list = ['date'] + metrics_manta_list    
-    print("Metrics Manta: ", metrics_manta_full_list)     
+    #print("Metrics Manta: ", metrics_manta_full_list)     
     metrics_itc_list, metrics_itc_full_list_norm = database.load_category_list('itc', metric='', df=df_categories)  
     metrics_itc_full_list = ['date'] + metrics_itc_list 
     #print("Metrics ITC: ", metrics_itc_full_list)         
@@ -194,11 +171,9 @@ def calc_metric_all(start_date = "2020-01-01", end_date = "2026-01-01", metric='
     df = pd.merge(df, df_capriole[metrics_capriole_full_list],on='date', how="outer")        
     df = pd.merge(df, df_itc[metrics_itc_full_list],on='date', how="outer")  # itc      
     df = pd.merge(df, df_manta[metrics_manta_full_list],on='date', how="outer")         
-    df = pd.merge(df, df_augmento[metrics_augmento_full_list],on='date', how="outer") 
-    #print('DF Augmento: ', df.tail(3))         
+    df = pd.merge(df, df_augmento[metrics_augmento_full_list],on='date', how="outer")        
     df = pd.merge(df, df_tv[metrics_tv_full_list],on='date', how="outer")        
-    print('DF Metrics: ', df.tail(5))   
-    print('DF MVRV, RR: ', df[['date','mvrv','reserve_risk']].tail(8))    
+    print('DF Metrics: ', df.tail(5))    
 
     #df['liquidity_tv_norm'] = df['liquidity_tv_norm'].shift(40) # Shift by 40 days
     df['roi'] = (df['close'] - df['close'].shift(90)) / df['close'] * 100 
@@ -258,23 +233,8 @@ def calc_metric_all(start_date = "2020-01-01", end_date = "2026-01-01", metric='
 
 
 def calc_categories(calc_json, single_metric, metrics_list):  
-  df = pd.read_json(calc_json, orient='records') 
-  #metrics_bmp_list = ['nupl', 'sopr', 'mvrv', 'liquidity_change', 'reserve_risk', 'bitcoin_sentiment', 'addresses_in_profit', 'rhodl_ratio', 'miner_fee_pct', 'realized_price_sth', 'sth_supply', 'vdd_multiple', 'fear_greed']
+  df = pd.read_json(StringIO(calc_json), orient='records') 
 
-  '''metrics_bmp_full_list = ['nupl', 'sopr', 'mvrv', 'liquidity', 'reserve_risk', 'bitcoin_sentiment', 'addresses_in_profit',
-                  'rhodl_ratio', 'miner_fee_pct', 'realized_price_sth','sth_supply',  'vdd_multiple', 'fear_greed', 'funding_rate', 'nvt', 'sth_mvrv',
-                  'lth_mvrv','financial_stress', 'high_yield_credit', 'm2_yoy_change', 'yield_spread', 'btc_etf_flows', 'cycle_capital_flows', 'bitcoin_cycle_master',
-                  'onchain_prediction', 'realized_price_lth', 'pi_cycle_oscillator',  'everything_indicator'] 
-  metrics_capriole_list = ['macro_index', 'heater', 'oi_pct_mcap', 'nvts', 'production_cost', 'miner_margin', 'supply_delta', 'cdd_trend', 'apparent_demand', 
-                            'energy_value', 'active_more_2y_percent', 'active_more_1y_percent', 'active_more_6m_percent', 'lth_supply_percent', 'yardstick', 'institutional_buying_excess', 'mnav_enterprise_mean', 'treasury_cvd_Z', 'buy_sell_ratio_roc',
-                            'companies_buying_per_day', 'ave_debt_to_equity', 'ave_debt_to_enterprise_value', 'ave_debt_to_bitcoin_treasury', 'yield_mean', 'days_cover_enterprise_mean', 'sentiment_spread', 'active_manager_sentiment', 'business_outlook', 'equity_fear_greed', 
-                            'equity_premium', 'm2_yoy_less_rates', 'gsr', 'insider_trades', 'market_breadth', 'sp_pcr', 'us_liquidity_yoy', 'usd_positioning', 'bbb_credit_spread', 'xly_xlp', 
-                            'como_spx', 'junk_treasuries', 'weight_node_strategy', 'weight_midas_strategy', 'weight_spectrum_strategy', 'macro_index_eth', 'apparent_demand_eth', 'heater_eth', 'oi_pct_mcap_eth', 'active_more_2y_pct_eth', 
-                            'active_more_1y_pct_eth', 'active_more_6m_pct_eth', 'cdd_trend_eth', 'speculation_index_eth', 'crypto_breadth']
-
-  metrics_manta_list = ['correlation', 'beta', 'funding']  
-  metrics_hyblock_list = ['volume_delta', 'whale_retail', 'user_bot_ratio', 'usdt_premium', 'bid_ask_ratio', 'top_traders_long', 'market_order_size', 'market_order_count', 'limit_order_count', 'bid_ask_delta', 'long_liquidations', 'short_liquidations', 'oi_delta', 'bvol', 'dvol']
-  metrics_list = metrics_bmp_full_list + ['risk_level','roi'] + metrics_capriole_list + metrics_manta_list + ['augmento'] + metrics_hyblock_list + ['nvt_combi'] #+ ['etf_flow'] #.pop(0) '''
   matrix = matrix_strategy()
 
   for metric in metrics_list:
@@ -282,10 +242,10 @@ def calc_categories(calc_json, single_metric, metrics_list):
     df[norm_name] = matrix.calc_norm(df[metric], norm_lookback) 
   single_norm = single_metric + '_norm'
 
-
   # Merge Macro Index / Risk data
   macro_cond = [df['date'] <= '2015-01-14',  df['date'] >= '2016-03-06'] # '2015-01-14'
   macro_category = [df['risk_level_norm'], df['macro_index_norm']]  # BMP for old data, Capriole for newer 
+  df = df.copy()  # Defragment DataFrame before adding new columns
   df['macro_combi_norm'] = np.select(macro_cond, macro_category)
   df['macro_combi_norm'] = df['macro_combi_norm'].fillna(0)
 
@@ -294,6 +254,7 @@ def calc_categories(calc_json, single_metric, metrics_list):
   df['gsr'] = 100 - df['gsr']  
   df['como_spx'] = 100 - df['como_spx']
   df['m2_yoy_blend'] = (df['m2_yoy_less_rates'] + df['m2_yoy_change']) / 2
+  df = df.copy()  # Defragment DataFrame
   
   df['close_norm'] = matrix.calc_norm(df['close'], norm_lookback)
 
@@ -355,17 +316,13 @@ def calc_categories(calc_json, single_metric, metrics_list):
   df['supply_demand_cat'] = df[supply_demand_cat_list_norm].mean(axis=1)   
   df['eth_cat'] = df[eth_cat_list_norm].mean(axis=1)    
   df['alts_cat'] = df[alts_cat_list_norm].mean(axis=1)    
-   
-  #df['single_cat'] = df[single_norm]
-  #df['custom_cat'] = df[custom_cat_list].mean(axis=1)   
-
-  #category_list = ['strategy_cat','market_cat', 'macro_cat', 'shortterm_cat', 'sentiment_cat', 'hodl_cat', 'manta_cat'] #,'single_cat']
-
-  #print('DF_Cat: ', df_cat, df_cat.info())
   
   for category in category_list:
     category_ma = category + '_ma'
     df[category_ma] = matrix.double_hull_ma(df[category], 5, 5)
+
+  os.makedirs('data', exist_ok=True)
+  df.to_csv('data/categories.csv')  
 
   return df
 
@@ -412,8 +369,9 @@ def calc_single_strategy(df_single, peak_shift, metric):
   df_single['strategy_ma'] = matrix.double_hull_ma(df_single[norm_name], 8, 8) 
   #df_single['strategy_ma'] = matrix.double_hull_ma(df_single[norm_name], 5, 5) 
   df_single = calc_peaks_valleys(df_single, 'strategy_ma', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)   
+  df_single = df_single.copy()  # Defragment DataFrame
   df_single['extremes'] = df_single['peaks'].shift(peak_shift).fillna(0) - df_single['valleys'].shift(peak_shift).fillna(0)
-  df_single['extremes'].replace(0, np.nan, inplace=True)
+  df_single['extremes'] = df_single['extremes'].replace(0, np.nan)
   df_single['extremes'] = df_single['extremes'].ffill(axis ='rows')  
   df_single[invest_name] = np.where((df_single['extremes'] < 0), 1, np.nan)
   df_single[invest_name] 
@@ -446,7 +404,7 @@ def calc_trade_status(df):
 
 def calc_multi_strategy(df, peak_shift, scores_list, use_signal=True):
   #scores_list = ['nvts', 'mvrv','reserve_risk','rhodl_ratio','nupl', 'macro_index']
-  print('Scores_List: ', scores_list)
+  #print('Scores_List: ', scores_list)
   if use_signal:
     # Use adding of scores method    
     invested_list = [] 

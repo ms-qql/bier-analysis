@@ -199,8 +199,9 @@ def update_category_chart(calc_json, signal_strategy, category):
   
   df['score_ma'] = matrix.double_hull_ma(result_df['total_score'], 5, 5) 
   df = matrix_strategy.calc_peaks_valleys(df, 'score_ma', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)   
+  df = df.copy()  # Defragment DataFrame
   df['extremes'] = df['peaks'].shift(peak_shift).fillna(0) - df['valleys'].shift(peak_shift).fillna(0)
-  df['extremes'].replace(0, np.nan, inplace=True)
+  df['extremes'] = df['extremes'].replace(0, np.nan)
   df['extremes'] = df['extremes'].ffill(axis ='rows') 
   df['invested_total'] = np.where((df['extremes'] < 0), 1, np.nan)  
 

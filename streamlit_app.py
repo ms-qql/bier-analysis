@@ -150,11 +150,11 @@ if update_graphs or 'data_loaded' not in st.session_state:
             with col_left:
                 st.subheader("Price & Invested Signal")
                 price_chart_json = graphs.update_price_chart(calc_json, signal_strategy, category_sel, 0,0,0,0,0,0,0,0,0)
-                st.plotly_chart(pio.from_json(price_chart_json), use_container_width=True, key="price_chart")
+                st.plotly_chart(pio.from_json(price_chart_json), width='stretch', key="price_chart")
             with col_right:
                 st.subheader("Regime Health")
                 radar_json = graphs.create_radar_chart(df, available_categories)
-                st.plotly_chart(pio.from_json(radar_json), use_container_width=True, key="radar_chart")
+                st.plotly_chart(pio.from_json(radar_json), width='stretch', key="radar_chart")
 
             # Row 2: Equity & Drawdown side-by-side
             col_eq, col_dd = st.columns(2)
@@ -164,7 +164,7 @@ if update_graphs or 'data_loaded' not in st.session_state:
                 fig_equity.add_trace(go.Scatter(x=df_perf['date'], y=df_perf['strat_equity'], name="BIER Strategy", line=dict(color='blue', width=2)))
                 fig_equity.add_trace(go.Scatter(x=df_perf['date'], y=df_perf['bh_equity'], name="Buy & Hold (BTC)", line=dict(color='gray', width=1, dash='dot')))
                 fig_equity.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-                st.plotly_chart(fig_equity, use_container_width=True, key="equity_chart")
+                st.plotly_chart(fig_equity, width='stretch', key="equity_chart")
 
             with col_dd:
                 st.subheader("Drawdown (%)")
@@ -172,21 +172,21 @@ if update_graphs or 'data_loaded' not in st.session_state:
                 fig_dd.add_trace(go.Scatter(x=df_perf['date'], y=df_perf['strat_dd'], name="Strat DD", fill='tozeroy', line=dict(color='red')))
                 fig_dd.add_trace(go.Scatter(x=df_perf['date'], y=df_perf['bh_dd'], name="B&H DD", line=dict(color='gray', dash='dot')))
                 fig_dd.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-                st.plotly_chart(fig_dd, use_container_width=True, key="dd_chart")
+                st.plotly_chart(fig_dd, width='stretch', key="dd_chart")
 
         with tab2:
             st.subheader("Cumulative Category Scores")
             cat_chart_json = graphs.update_category_chart(calc_json, signal_strategy, category_sel)
-            st.plotly_chart(pio.from_json(cat_chart_json), use_container_width=True, key="cat_chart")
+            st.plotly_chart(pio.from_json(cat_chart_json), width='stretch', key="cat_chart")
 
             st.subheader("Metric Normalization / Raw Data")
             norm_chart_json = graphs.update_norm_chart(calc_json, category_sel, show_raw_data)
-            st.plotly_chart(pio.from_json(norm_chart_json), use_container_width=True, key="norm_chart")
+            st.plotly_chart(pio.from_json(norm_chart_json), width='stretch', key="norm_chart")
 
         with tab3:
             st.subheader("Individual Strategy Signals")
             signal_chart_json = graphs.update_signal_chart(calc_json, signal_strategy, category_sel)
-            st.plotly_chart(pio.from_json(signal_chart_json), use_container_width=True, height=800, key="sig_chart")
+            st.plotly_chart(pio.from_json(signal_chart_json), width='stretch', height=800, key="sig_chart")
 
 st.sidebar.markdown("---")
 st.sidebar.info("Dashboard built with Streamlit and BIER Database.")
