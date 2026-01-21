@@ -952,4 +952,38 @@ def read_category_weight_table():
     if 'id' in df_weights.columns:
         df_weights = df_weights.drop(columns=['id'])
     return df_weights 
+
+
+def update_custom_metrics(selected_metrics):
+    """
+    Update the custom column in bier_categories table.
+    Set custom=1 for selected metrics, custom=0 for all others.
+    
+    Args:
+        selected_metrics (list): List of metric names to mark as custom
+    """
+    from psycopg2 import sql
+    
+    try:
+        # Use the global connection
+        with connection.cursor() as cur:
+            # First, set all custom values to 0
+            cur.execute("UPDATE bier_categories SET custom = 0")
+            
+            # Then, set custom=1 for selected metrics
+            if selected_metrics:
+                query = sql.SQL("UPDATE bier_categories SET custom = 1 WHERE metric IN ({})").format(
+                    sql.SQL(', ').join(sql.Placeholder() * len(selected_metrics))
+                )
+                cur.execute(query, selected_metrics)
+            
+            # Commit changes
+            connection.commit()
+            
+            print(f"Updated custom metrics: {selected_metrics}")
+        
+    except Exception as e:
+        print(f"Error updating custom metrics: {e}")
+        connection.rollback()
+        raise
   

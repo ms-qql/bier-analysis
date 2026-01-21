@@ -185,7 +185,7 @@ if update_graphs or 'data_loaded' not in st.session_state:
         st.markdown("---")
 
         # --- TABS FOR BETTER ORGANIZATION ---
-        tab1, tab2, tab3 = st.tabs(["Main Overview", "Deep Dive: Categories", "Detailed Signals"])
+        tab1, tab2 = st.tabs(["Main Overview", "Deep Dive: Categories"])
 
         with tab1:
             # Row 1: Price Chart & Radar
@@ -202,11 +202,11 @@ if update_graphs or 'data_loaded' not in st.session_state:
             # Row 2: Equity & Drawdown side-by-side
             col_eq, col_dd = st.columns(2)
             with col_eq:
-                st.subheader("Equity Curve")
+                st.subheader("Equity Curve (k\\$) — Starting Capital: \\$100,000")
                 fig_equity = go.Figure()
                 fig_equity.add_trace(go.Scatter(x=df_perf['date'], y=df_perf['strat_equity'], name="BIER Strategy", line=dict(color='blue', width=2)))
                 fig_equity.add_trace(go.Scatter(x=df_perf['date'], y=df_perf['bh_equity'], name="Buy & Hold (BTC)", line=dict(color='gray', width=1, dash='dot')))
-                fig_equity.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                fig_equity.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fig_equity, width='stretch', key="equity_chart")
 
             with col_dd:
@@ -214,7 +214,7 @@ if update_graphs or 'data_loaded' not in st.session_state:
                 fig_dd = go.Figure()
                 fig_dd.add_trace(go.Scatter(x=df_perf['date'], y=df_perf['strat_dd'], name="Strat DD", fill='tozeroy', line=dict(color='red')))
                 fig_dd.add_trace(go.Scatter(x=df_perf['date'], y=df_perf['bh_dd'], name="B&H DD", line=dict(color='gray', dash='dot')))
-                fig_dd.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                fig_dd.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fig_dd, width='stretch', key="dd_chart")
 
         with tab2:
@@ -222,14 +222,9 @@ if update_graphs or 'data_loaded' not in st.session_state:
             cat_chart_json = graphs.update_category_chart(calc_json, signal_strategy, category_sel)
             st.plotly_chart(pio.from_json(cat_chart_json), width='stretch', key="cat_chart")
 
-            st.subheader("Metric Normalization / Raw Data")
-            norm_chart_json = graphs.update_norm_chart(calc_json, category_sel, show_raw_data)
+            st.subheader("Individual Metric Signals")
+            norm_chart_json = graphs.update_norm_chart(calc_json, category_sel, show_raw_data, signal_strategy, custom_metrics if category_sel == 'custom' else None)
             st.plotly_chart(pio.from_json(norm_chart_json), width='stretch', key="norm_chart")
-
-        with tab3:
-            st.subheader("Individual Strategy Signals")
-            signal_chart_json = graphs.update_signal_chart(calc_json, signal_strategy, category_sel, custom_metrics if category_sel == 'custom' else None, show_raw_data)
-            st.plotly_chart(pio.from_json(signal_chart_json), width='stretch', height=800, key="sig_chart")
 
 st.sidebar.markdown("---")
 st.sidebar.info("Dashboard built with Streamlit and BIER Database.")

@@ -103,6 +103,7 @@ def update_price_chart(calc_json, signal_strategy, category, risk_weight, market
     
   fig.update_layout(
       title = charttitle_price,
+      xaxis=dict(range=[x_axis.min(), x_axis.max()]),  # Stretch to full data range
       yaxis=dict(title='Price'),
       yaxis2=dict(title='Score', overlaying='y', side='right'),    
       legend={'orientation':'h'},
@@ -233,6 +234,7 @@ def update_category_chart(calc_json, signal_strategy, category):
 
   fig.update_layout(
       title = charttitle_category,
+      xaxis=dict(range=[df_plot['date'].min(), df_plot['date'].max()]),  # Stretch to full data range
       yaxis=dict(title='Categories'), 
       legend={'orientation':'h'},
       paper_bgcolor= 'rgba(0,0,0,0)', # Transparent
@@ -458,8 +460,9 @@ def update_signal_chart(calc_json, signal_strategy, category, custom_metrics=Non
 
 
 
-def update_norm_chart(calc_json, category, raw_data):  
+def update_norm_chart(calc_json, category, raw_data, signal_strategy, custom_metrics=None):  
   df = pd.read_json(StringIO(calc_json), orient='records') 
+  peak_shift = 6
   #print('Norm Graph DF: ', df, df.columns)
 
   matrix = matrix_strategy.matrix_strategy()
@@ -470,6 +473,10 @@ def update_norm_chart(calc_json, category, raw_data):
   if category == 'all_categories':
       print("Metrics Norm: all_categories (weighted combination)")
       metrics_list = []  # Empty list
+  elif category == 'custom' and custom_metrics:
+      # Use the selected custom metrics from UI
+      print("Metrics Norm (custom selected): ", custom_metrics)
+      metrics_list = custom_metrics
   else:
       metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
       print("Metrics Norm: ", metrics_list_norm)         
@@ -483,13 +490,24 @@ def update_norm_chart(calc_json, category, raw_data):
           mode = 'lines',
           name = 'Price'))        
 
-  for metric in metrics_list:                 
-          #print(f'Metric for {metric} Graph: /n', df[metric])
-          fig.add_trace(go.Scatter(
-                  x = x_axis, 
-                  y = matrix.calc_norm(df[metric] if not raw_data else df[metric]),
-                  mode = 'lines',
-                  name = metric)) #.replace("_norm","")))
+  # Plot individual metric signals (similar to signal chart)
+  for metric in metrics_list:
+        single_metric_list = [metric]
+        df_metric = matrix_strategy.calc_multi_strategy(df.copy(), peak_shift, single_metric_list, signal_strategy)  
+        
+        # Use raw metric values if show_raw_data is enabled, otherwise use invest_score
+        if raw_data:
+            # Show the original metric values
+            metric_graph = df_metric[metric] if metric in df_metric.columns else df_metric['invest_score']
+        else:
+            # Show the normalized invest_score (0-100)
+            metric_graph = df_metric['invest_score']
+        
+        fig.add_trace(go.Scatter(
+                x = x_axis, 
+                y = metric_graph,
+                mode = 'lines',
+                name = metric)) #.replace("_norm","")))
 
   if category == 'sentiment':
         fear_greed_blend = (df['fear_greed_norm'] * 2.0 + df['augmento_norm'] * 2.0 + df['equity_fear_greed_norm'] * 1.0) / 5.0
