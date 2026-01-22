@@ -128,12 +128,13 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, use_
         if use_alt_signal:
             df = matrix_strategy.calc_alternative_signal(df, 'invest_score', deviation=alt_signal_deviation)
         else:
-            df['invest_score_ma'] = matrix_strategy.matrix_strategy().double_hull_ma(df['invest_score'], 5, 5)
+            df = matrix_strategy.calc_signal(df, 'invest_score', deviation=alt_signal_deviation)            
+            '''df['invest_score_ma'] = matrix_strategy.matrix_strategy().double_hull_ma(df['invest_score'], 5, 5)
             df = matrix_strategy.calc_peaks_valleys(df, 'invest_score_ma', peak_min=50, vert_dist=0, peak_dist=2, peak_width=0, peak_prominence=10, filt_double_extremes=False)
             df['extremes'] = df['peaks'].shift(6).fillna(0) - df['valleys'].shift(6).fillna(0)
             df['extremes'] = df['extremes'].replace(0, np.nan)
             df['extremes'] = df['extremes'].ffill(axis='rows')
-            df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
+            df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)'''
         
         # Add range column (for signal strategy compatibility)
         df['range'] = np.where((df['invest_score'] == 50), 1, np.nan)

@@ -506,16 +506,13 @@ def update_norm_chart(calc_json, category, raw_data, signal_strategy, custom_met
   df_total = matrix_strategy.calc_multi_strategy(df.copy(), peak_shift, metrics_list, signal_strategy, use_alt_signal)
   total_score = df_total['invest_score']
 
-  # Calculate BIER Invested signals (Peaks/Valleys on Total Score)
-  # Using logic from update_category_chart
-  df_total['score_ma'] = matrix.double_hull_ma(total_score, 5, 5)
-  df_total = matrix_strategy.calc_peaks_valleys(df_total, 'score_ma', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)
-  df_total = df_total.copy()
-  df_total['extremes'] = df_total['peaks'].shift(peak_shift).fillna(0) - df_total['valleys'].shift(peak_shift).fillna(0)
-  df_total['extremes'] = df_total['extremes'].replace(0, np.nan)
-  # Note: update_category_chart uses ffill for extremes
-  df_total['extremes'] = df_total['extremes'].ffill(axis = 0)
-  df_total['invested_total'] = np.where((df_total['extremes'] < 0), 1, np.nan)
+  # Use centralized signal logic from calc_multi_strategy (df_total)
+  # Map 'invested' to 'invested_total' for compatibility if needed, or use directly
+  if 'invested' in df_total.columns:
+      df_total['invested_total'] = df_total['invested']
+  else:
+      # Fallback should not be hit if calc_multi_strategy works as expected
+      df_total['invested_total'] = np.nan
 
   # Determine Price Y-axis
   if raw_data:
@@ -547,6 +544,30 @@ def update_norm_chart(calc_json, category, raw_data, signal_strategy, custom_met
           mode = 'markers',
           marker = dict(color='green'),    
           name = 'BIER invested'))
+
+  # Add Peaks Markers (Sell/High checks) on Total Score
+  # Peaks in alternative signal logic = Divest signal
+  if 'peaks' in df_total.columns:
+      peaks_y = df_total.apply(lambda row: row['invest_score'] if row['peaks'] == 1 else None, axis=1)
+      fig.add_trace(go.Scatter(
+          x=x_axis,
+          y=peaks_y,
+          mode='markers',
+          marker=dict(symbol='triangle-down', size=10, color='orange'),
+          name='Peak (Divest)'
+      ))
+
+  # Add Valleys Markers (Buy/Low checks) on Total Score
+  # Valleys in alternative signal logic = Invest signal
+  if 'valleys' in df_total.columns:
+      valleys_y = df_total.apply(lambda row: row['invest_score'] if row['valleys'] == 1 else None, axis=1)
+      fig.add_trace(go.Scatter(
+          x=x_axis,
+          y=valleys_y,
+          mode='markers',
+          marker=dict(symbol='triangle-up', size=10, color='lime'),
+          name='Valley (Invest)'
+      ))
 
   # Plot individual metric signals (similar to signal chart)
   for metric in metrics_list:

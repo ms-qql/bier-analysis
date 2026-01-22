@@ -8,13 +8,13 @@ import time
 import os
 from io import StringIO
 from scipy.signal import find_peaks, savgol_filter
-#from findpeaks import findpeaks
 from scipy.stats import zscore
 #import yfinance as yf
 
 from . import database 
 from . import database
 from . import matrix_bot
+from .peak_detector import BitcoinPeakDetector
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -299,7 +299,7 @@ def calc_categories(calc_json, single_metric, metrics_list):
 
   df['custom_cat'] = df[custom_cat_list_norm].mean(axis=1)  
   df['bier_cat'] = df[bier_cat_list_norm].mean(axis=1)    
-  df['test_cat'] = df[test_cat_list_norm].mean(axis=1)   
+  df['test_cat'] = df[[c for c in test_cat_list_norm if c in df.columns]].mean(axis=1)   
   df['capriole_cat'] = df[capriole_cat_list_norm].mean(axis=1)  
   df['bmp_cat'] = df[bmp_cat_list_norm].mean(axis=1)   
   df['manta_cat'] = df[manta_cat_list_norm].mean(axis=1)    
@@ -411,7 +411,78 @@ def calc_trade_status(df):
 
     return df
 
-from .peak_detector import BitcoinPeakDetector
+
+def calc_signal(df, score_col='invest_score', deviation=10):
+    """
+    Calculates peaks and valleys using the 3-Method Voting approach.
+    Methods: Slope-based, Bayesian Change Point, EWMA Adaptive.
+    
+    deviation: Sensitivity slider value (1-20). Default around 10.
+    Higher deviation = Less sensitive = Larger window, Lower hazard, Lower lambda.
+    Lower deviation = More sensitive = Smaller window, Higher hazard, Higher lambda.
+    """
+    if df.empty:
+        df['peaks'] = np.nan
+        df['valleys'] = np.nan
+        df['invested'] = np.nan
+        df['extremes'] = np.nan
+        return df
+
+    # Base parameters for sensitivity = 10
+    base_window = 10
+    base_hazard = 1/50 # 0.02
+    base_lambda = 0.2
+    
+    # Calculate scaling factor relative to 10
+    # Avoid division by zero if deviation is 0 (though min slider is 1)
+    safe_deviation = max(deviation, 1)
+    factor = safe_deviation / 10.0
+    
+    # Adjust parameters
+    # More sensitive (factor < 1) -> Smaller window, Higher hazard/lambda
+    # Less sensitive (factor > 1) -> Larger window, Lower hazard/lambda
+    
+    adj_window = int(base_window * factor)
+    adj_hazard = base_hazard / factor
+    adj_lambda = base_lambda / factor
+    
+    # Ensure reasonable bounds
+    adj_window = max(adj_window, 3) 
+    adj_hazard = min(max(adj_hazard, 0.001), 0.5)
+    adj_lambda = min(max(adj_lambda, 0.01), 0.9)
+
+    print(f"Signal Params: Dev={safe_deviation}, Win={adj_window}, Haz={adj_hazard:.4f}, Lam={adj_lambda:.2f}")
+
+    detector = BitcoinPeakDetector(window_slope=adj_window, hazard_rate=adj_hazard, ewma_lambda=adj_lambda)
+    
+    peaks, valleys, conf = detector.detect_full_series(df[score_col])
+    
+    df['peaks'] = np.where(peaks == 1, 1, np.nan)
+    df['valleys'] = np.where(valleys == 1, 1, np.nan)
+    df['signal_conf'] = conf
+    
+    # Construct Invested State
+    # Rule: Invested after Valley, Divested after Peak
+    invested = np.full(len(df), np.nan)
+    current_state = np.nan # Nan = unknown, 1 = invested, 0 = divested
+    
+    # Initialize based on first signal
+    # Or default to divested if score < 50?
+    
+    for i in range(len(df)):
+        if peaks[i] == 1:
+            current_state = np.nan # Divest
+        elif valleys[i] == 1:
+            current_state = 1 # Invest
+            
+        invested[i] = current_state
+        
+    df['invested'] = invested
+    
+    # Extremes logic for compatibility
+    df['extremes'] = np.where(df['valleys'] == 1, -1, np.where(df['peaks'] == 1, 1, np.nan))
+    
+    return df
 
 def calc_alternative_signal(df, score_col='invest_score', deviation=10):
     """
