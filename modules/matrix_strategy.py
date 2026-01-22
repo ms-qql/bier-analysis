@@ -168,11 +168,48 @@ def calc_metric_all(start_date = "2020-01-01", end_date = "2026-01-01", metric='
     metrics_augmento_full_list = ['date','augmento'] 
 
     df = df_bmp_full[metrics_bmp_full_list]     
-    df = pd.merge(df, df_capriole[metrics_capriole_full_list],on='date', how="outer")        
-    df = pd.merge(df, df_itc[metrics_itc_full_list],on='date', how="outer")  # itc      
-    df = pd.merge(df, df_manta[metrics_manta_full_list],on='date', how="outer")         
-    df = pd.merge(df, df_augmento[metrics_augmento_full_list],on='date', how="outer")        
-    df = pd.merge(df, df_tv[metrics_tv_full_list],on='date', how="outer")        
+    
+    # Robust Merging: Use try-except to handle any data inconsistencies
+    try:
+        if set(metrics_capriole_full_list).issubset(df_capriole.columns):
+            df = pd.merge(df, df_capriole[metrics_capriole_full_list],on='date', how="outer")
+        else:
+            print(f"Skipping Capriole Merge: Missing columns")
+    except Exception as e:
+        print(f"Error merging Capriole: {e}")
+
+    try:
+        if set(metrics_itc_full_list).issubset(df_itc.columns):
+            df = pd.merge(df, df_itc[metrics_itc_full_list],on='date', how="outer")  # itc      
+        else:
+            print(f"Skipping ITC Merge: Missing columns")
+    except Exception as e:
+        print(f"Error merging ITC: {e}")
+
+    try:
+        if set(metrics_manta_full_list).issubset(df_manta.columns):
+            df = pd.merge(df, df_manta[metrics_manta_full_list],on='date', how="outer")
+        else:
+            print(f"Skipping Manta Merge: Missing columns")
+    except Exception as e:
+        print(f"Error merging Manta: {e}")
+        
+    try:
+        if set(metrics_augmento_full_list).issubset(df_augmento.columns):
+            df = pd.merge(df, df_augmento[metrics_augmento_full_list],on='date', how="outer")
+        else:
+            print(f"Skipping Augmento Merge: Missing columns")
+    except Exception as e:
+        print(f"Error merging Augmento: {e}")
+    
+    try:
+        if set(metrics_tv_full_list).issubset(df_tv.columns):
+            df = pd.merge(df, df_tv[metrics_tv_full_list],on='date', how="outer")        
+        else:
+             print(f"Skipping TV Merge: Missing columns")
+    except Exception as e:
+        print(f"Error merging TV: {e}")
+
     print('DF Metrics: ', df.tail(5))    
 
     #df['liquidity_tv_norm'] = df['liquidity_tv_norm'].shift(40) # Shift by 40 days
@@ -238,9 +275,14 @@ def calc_categories(calc_json, single_metric, metrics_list):
   matrix = matrix_strategy()
 
   for metric in metrics_list:
-    norm_name = metric + '_norm'
-    df[norm_name] = matrix.calc_norm(df[metric], norm_lookback) 
-  single_norm = single_metric + '_norm'
+    if metric in df.columns:
+        norm_name = metric + '_norm'
+        df[norm_name] = matrix.calc_norm(df[metric], norm_lookback) 
+  
+  if single_metric in df.columns:
+      single_norm = single_metric + '_norm'
+  else:
+      single_norm = None
 
   # Merge Macro Index / Risk data
   macro_cond = [df['date'] <= '2015-01-14',  df['date'] >= '2016-03-06'] # '2015-01-14'
@@ -297,25 +339,32 @@ def calc_categories(calc_json, single_metric, metrics_list):
   #shortterm_cat_list_norm += ['nvt_combi_norm']
   #print('Market Metrics enhanced: ', market_cat_list_norm)
 
-  df['custom_cat'] = df[custom_cat_list_norm].mean(axis=1)  
-  df['bier_cat'] = df[bier_cat_list_norm].mean(axis=1)    
+  df['custom_cat'] = df[[c for c in custom_cat_list_norm if c in df.columns]].mean(axis=1)  
+  df['bier_cat'] = df[[c for c in bier_cat_list_norm if c in df.columns]].mean(axis=1)    
   df['test_cat'] = df[[c for c in test_cat_list_norm if c in df.columns]].mean(axis=1)   
-  df['capriole_cat'] = df[capriole_cat_list_norm].mean(axis=1)  
-  df['bmp_cat'] = df[bmp_cat_list_norm].mean(axis=1)   
-  df['manta_cat'] = df[manta_cat_list_norm].mean(axis=1)    
-  df['mining_cat'] = df[itc_cat_list_norm].mean(axis=1)  
-  df['macro_cat'] = df[tv_cat_list_norm].mean(axis=1)   
-  df['strategy_cat'] = df[strategy_cat_list_norm].mean(axis=1)  
-  df['market_cat'] = df[market_cat_list_norm].mean(axis=1)   
-  df['mining_cat'] = df[mining_cat_list_norm].mean(axis=1)  
-  df['macro_cat'] = df[macro_cat_list_norm].mean(axis=1)   
-  df['shortterm_cat'] = matrix.double_hull_ma(df[shortterm_cat_list_norm].mean(axis=1) , 10, 10) 
-  df['sentiment_cat'] = df[sentiment_cat_list_norm].mean(axis=1)    
-  df['hodl_cat'] = df[hodl_cat_list_norm].mean(axis=1)  
-  df['treasury_cat'] = df[treasury_cat_list_norm].mean(axis=1)  
-  df['supply_demand_cat'] = df[supply_demand_cat_list_norm].mean(axis=1)   
-  df['eth_cat'] = df[eth_cat_list_norm].mean(axis=1)    
-  df['alts_cat'] = df[alts_cat_list_norm].mean(axis=1)    
+  df['capriole_cat'] = df[[c for c in capriole_cat_list_norm if c in df.columns]].mean(axis=1)  
+  df['bmp_cat'] = df[[c for c in bmp_cat_list_norm if c in df.columns]].mean(axis=1)   
+  df['manta_cat'] = df[[c for c in manta_cat_list_norm if c in df.columns]].mean(axis=1)    
+  df['mining_cat'] = df[[c for c in itc_cat_list_norm if c in df.columns]].mean(axis=1)  
+  df['macro_cat'] = df[[c for c in tv_cat_list_norm if c in df.columns]].mean(axis=1)   
+  df['strategy_cat'] = df[[c for c in strategy_cat_list_norm if c in df.columns]].mean(axis=1)  
+  df['market_cat'] = df[[c for c in market_cat_list_norm if c in df.columns]].mean(axis=1)  
+  df['mining_cat'] = df[[c for c in mining_cat_list_norm if c in df.columns]].mean(axis=1)  
+  df['macro_cat'] = df[[c for c in macro_cat_list_norm if c in df.columns]].mean(axis=1)   
+  
+  # Ensure valid columns for double_hull_ma
+  shortterm_cols = [c for c in shortterm_cat_list_norm if c in df.columns]
+  if shortterm_cols:
+      df['shortterm_cat'] = matrix.double_hull_ma(df[shortterm_cols].mean(axis=1) , 10, 10) 
+  else:
+      df['shortterm_cat'] = np.nan
+
+  df['sentiment_cat'] = df[[c for c in sentiment_cat_list_norm if c in df.columns]].mean(axis=1)    
+  df['hodl_cat'] = df[[c for c in hodl_cat_list_norm if c in df.columns]].mean(axis=1)  
+  df['treasury_cat'] = df[[c for c in treasury_cat_list_norm if c in df.columns]].mean(axis=1)  
+  df['supply_demand_cat'] = df[[c for c in supply_demand_cat_list_norm if c in df.columns]].mean(axis=1)   
+  df['eth_cat'] = df[[c for c in eth_cat_list_norm if c in df.columns]].mean(axis=1)    
+  df['alts_cat'] = df[[c for c in alts_cat_list_norm if c in df.columns]].mean(axis=1)    
   
   for category in category_list:
     category_ma = category + '_ma'
@@ -601,7 +650,7 @@ def calc_multi_strategy(df, peak_shift, scores_list, use_signal=True, use_alt_si
     scores_list_norm = [item + '_norm' for item in scores_list]
     print('Scores_List: ', scores_list)
     if len(scores_list) > 0:
-        df['strategy'] = df[scores_list_norm].mean(axis=1)   
+        df['strategy'] = df[[c for c in scores_list_norm if c in df.columns]].mean(axis=1)   
     else:
         df['strategy'] = 0
     df['invest_score'] = matrix.double_hull_ma(df['strategy'], 5, 5) 

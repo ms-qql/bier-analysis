@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import datetime
+from io import StringIO
 from scipy.signal import savgol_filter, find_peaks
 
 from backtesting import Backtest, Strategy
@@ -11,6 +12,7 @@ from backtesting.test import SMA, GOOG
 from backtesting.lib import TrailingStrategy
 
 from . import matrix_strategy 
+from . import database 
 
 
 
@@ -272,3 +274,205 @@ def get_backtest_stats(start_date, end_date, asset, okx_data, strategy_selected)
                   }
 
     return statistics 
+
+
+def get_backtest_stats_dict(df_bt):
+    """
+    Helper to run backtest and return a dictionary of key stats.
+    """
+    try:
+        bt_stats = Backtest(df_bt, Matrix, cash=10000, commission=.0005)
+        stats = bt_stats.run()
+        
+        return {
+            'return': stats['Return [%]'],
+            'max_dd': stats['Max. Drawdown [%]'],
+            'sharpe': stats['Sharpe Ratio'],
+            'sortino': stats['Sortino Ratio'],
+            'calmar': stats['Calmar Ratio'],
+            # Add others if needed
+        }
+    except Exception as e:
+        print(f"Backtest error: {e}")
+        return {
+            'return': 0.0,
+            'max_dd': 0.0,
+            'sharpe': 0.0,
+            'sortino': 0.0,
+            'calmar': 0.0
+        }
+
+@anvil.server.callable
+def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_signal, alt_signal_deviation, max_combination_size=2):
+    """
+    Batch backtest for all metrics with 'test=1' in database.
+    After individual tests, tests combinations of profitable metrics (up to max_combination_size).
+    
+    Args:
+        max_combination_size: Maximum number of metrics to combine (default 5)
+    """
+    from itertools import combinations
+    
+    print("Starting Batch Backtest...")
+    
+    # 1. Initialize Table
+    database.create_bier_backtest_table()
+    
+    # 2. Get Metrics to Test
+    test_metrics = database.get_test_metrics()
+    if not test_metrics:
+        print("No test metrics found.")
+        return "No metrics marked for testing."
+        
+    print(f"Metrics to test: {test_metrics}")
+
+    # 3. Sync Columns
+    database.sync_backtest_columns(test_metrics)
+    
+    # 4. Define Test Run ID
+    test_run_id = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 5. Load base data once for efficiency
+    json_res = matrix_strategy.calc_metric_all(start_date, end_date, "risk_level", asset)
+    df_base = pd.read_json(StringIO(json_res), orient='records')
+
+    results = []
+    profitable_metrics = []
+
+    # PHASE 1: Test Individual Metrics
+    print("\n=== PHASE 1: Testing Individual Metrics ===")
+    for metric in test_metrics:
+        print(f"Testing metric: {metric}")
+        try:
+            metrics_list = [metric]
+            
+            df_calc = matrix_strategy.calc_multi_strategy(df_base.copy(), 1, metrics_list, signal_strategy, use_alt_signal, alt_signal_deviation)
+            df_calc = df_calc.rename(columns={'invest_score': 'Score'})
+            
+            # Using standard logic from save_backtest_score
+            peak_shift = 1
+            if 'trigger_short' in df_calc.columns:
+                df_calc['signal_peaks'] = df_calc['trigger_short'].shift(peak_shift) * df_calc['Score']
+                df_calc['signal_bottoms'] = df_calc['trigger_long'].shift(peak_shift) * df_calc['Score']
+            elif 'peaks' in df_calc.columns: 
+                 df_calc['signal_peaks'] = df_calc['peaks'].shift(peak_shift) * df_calc['Score']
+                 df_calc['signal_bottoms'] = df_calc['valleys'].shift(peak_shift) * df_calc['Score']
+            
+            # Prepare for Backtest
+            df_calc['time'] = df_calc['date'].dt.strftime('%Y-%m-%d')
+            df_json_cols = df_calc[['time','open','high','low','close','Score','signal_peaks','signal_bottoms']] 
+            df_json_cols = df_json_cols.iloc[:-2]
+            
+            df_bt = create_backtest_bier_df(df_json_cols)
+            stats = get_backtest_stats_dict(df_bt)
+            
+            # Prepare Row Data
+            row_data = {
+                'test_run': test_run_id,
+                'date': datetime.datetime.now().strftime("%Y-%m-%d"),
+                'name': metric,
+                'start_date': start_date,
+                'end_date': end_date,
+                'signal_strategy': str(signal_strategy),
+                'return': stats['return'],
+                'max_dd': stats['max_dd'],
+                'sharpe': stats['sharpe'],
+                'sortino': stats['sortino'],
+                'calmar': stats['calmar']
+            }
+            
+            # Initialize all test metric columns to 0
+            for m in test_metrics:
+                row_data[m.lower()] = 0.0
+            
+            # Set this metric to 1.0
+            row_data[metric.lower()] = 1.0
+            database.save_backtest_row(row_data)
+            results.append(f"{metric}: {stats['return']:.2f}%")
+            
+            # Track profitable metrics with good Sharpe ratio
+            if stats['sharpe'] > 0.8:
+                profitable_metrics.append(metric)
+                print(f"  ✓ Good Sharpe: {stats['sharpe']:.2f} (Return: {stats['return']:.2f}%)")
+            else:
+                print(f"  ✗ Low Sharpe: {stats['sharpe']:.2f} (Return: {stats['return']:.2f}%)")
+            
+        except Exception as e:
+            print(f"Error testing {metric}: {e}")
+    
+    # PHASE 2: Test Combinations of Profitable Metrics
+    if len(profitable_metrics) >= 2:
+        print(f"\n=== PHASE 2: Testing Combinations of {len(profitable_metrics)} Metrics (Sharpe > 0.5) ===")
+        print(f"Max combination size: {max_combination_size}")
+        
+        total_combos = 0
+        for combo_size in range(2, min(max_combination_size + 1, len(profitable_metrics) + 1)):
+            combos = list(combinations(profitable_metrics, combo_size))
+            total_combos += len(combos)
+            print(f"  Size {combo_size}: {len(combos)} combinations")
+        
+        print(f"Total combinations to test: {total_combos}\n")
+        
+        combo_count = 0
+        for combo_size in range(2, min(max_combination_size + 1, len(profitable_metrics) + 1)):
+            for combo in combinations(profitable_metrics, combo_size):
+                combo_count += 1
+                combo_str = " + ".join(combo)
+                print(f"[{combo_count}/{total_combos}] Testing: {combo_str}")
+                
+                try:
+                    metrics_list = list(combo)
+                    
+                    df_calc = matrix_strategy.calc_multi_strategy(df_base.copy(), 1, metrics_list, signal_strategy, use_alt_signal, alt_signal_deviation)
+                    df_calc = df_calc.rename(columns={'invest_score': 'Score'})
+                    
+                    peak_shift = 1
+                    if 'trigger_short' in df_calc.columns:
+                        df_calc['signal_peaks'] = df_calc['trigger_short'].shift(peak_shift) * df_calc['Score']
+                        df_calc['signal_bottoms'] = df_calc['trigger_long'].shift(peak_shift) * df_calc['Score']
+                    elif 'peaks' in df_calc.columns:
+                        df_calc['signal_peaks'] = df_calc['peaks'].shift(peak_shift) * df_calc['Score']
+                        df_calc['signal_bottoms'] = df_calc['valleys'].shift(peak_shift) * df_calc['Score']
+                    
+                    df_calc['time'] = df_calc['date'].dt.strftime('%Y-%m-%d')
+                    df_json_cols = df_calc[['time','open','high','low','close','Score','signal_peaks','signal_bottoms']] 
+                    df_json_cols = df_json_cols.iloc[:-2]
+                    
+                    df_bt = create_backtest_bier_df(df_json_cols)
+                    stats = get_backtest_stats_dict(df_bt)
+                    
+                    # Prepare Row Data for combination
+                    combo_name = "_".join(combo)
+                    row_data = {
+                        'test_run': test_run_id,
+                        'date': datetime.datetime.now().strftime("%Y-%m-%d"),
+                        'name': combo_name,
+                        'start_date': start_date,
+                        'end_date': end_date,
+                        'signal_strategy': str(signal_strategy),
+                        'return': stats['return'],
+                        'max_dd': stats['max_dd'],
+                        'sharpe': stats['sharpe'],
+                        'sortino': stats['sortino'],
+                        'calmar': stats['calmar']
+                    }
+                    
+                    # Initialize all test metric columns to 0
+                    for m in test_metrics:
+                        row_data[m.lower()] = 0.0
+                    
+                    # Set all metrics in combination to 1.0
+                    for metric in combo:
+                        row_data[metric.lower()] = 1.0
+                    
+                    database.save_backtest_row(row_data)
+                    results.append(f"{combo_str}: {stats['return']:.2f}%")
+                    print(f"  Result: {stats['return']:.2f}% (Sharpe: {stats['sharpe']:.2f})")
+                    
+                except Exception as e:
+                    print(f"  Error testing combination: {e}")
+    else:
+        print(f"\n=== PHASE 2: Skipped (only {len(profitable_metrics)} profitable metrics) ===")
+            
+    print("\nBatch Backtest Completed.")
+    return f"Completed. Tested {len(test_metrics)} individual + {total_combos if len(profitable_metrics) >= 2 else 0} combinations. Top results in Backtest Evaluation tab."  

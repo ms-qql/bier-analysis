@@ -144,6 +144,22 @@ SELECT_DATE_RANGE_MACRO_TABLE = "SELECT * FROM macro_norm WHERE (date >= %s and 
 SELECT_LAST_X_ROWS_MACRO_TABLE = "SELECT * FROM macro_norm ORDER BY id DESC LIMIT "
 SELECT_ALL_ROWS_BIER_CATEGORIES_TABLE = "SELECT * FROM bier_categories;"
 SELECT_ALL_ROWS_BIER_CATEGORY_WEIGHT_TABLE = "SELECT * FROM bier_category_weight;"
+SELECT_ALL_ROWS_BIER_BACKTEST_TABLE = "SELECT * FROM bier_backtest ORDER BY id DESC;"
+
+CREATE_BIER_BACKTEST_TABLE = """CREATE TABLE IF NOT EXISTS bier_backtest (
+    id SERIAL PRIMARY KEY,
+    test_run TEXT,
+    date TEXT,
+    name TEXT,
+    start_date TEXT,
+    end_date TEXT,
+    signal_strategy TEXT,
+    return REAL,
+    max_dd REAL,
+    sharpe REAL,
+    sortino REAL,
+    calmar REAL
+);"""
 
 ADD_ROW_ITC_TABLE = """INSERT INTO itc (date, mcap, mcap_risk, close, risk_level, alt_mcap, alt_mcap_risk, dxy_usd, dxy_usd_risk, eth_usd, eth_usd_risk, bnb_usd, bnb_usd_risk, sol_usd, sol_usd_risk, ltc_usd, ltc_usd_risk) 
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);"""
@@ -210,6 +226,8 @@ DELETE_LAST_X_ROWS_ETF_TABLE = "DELETE FROM etf_flow WHERE id IN (SELECT id FROM
 DELETE_LAST_X_ROWS_BIER_TABLE = "DELETE FROM bier WHERE id IN (SELECT id FROM bier ORDER BY id DESC LIMIT "
 DELETE_LAST_X_ROWS_BIER2_TABLE = "DELETE FROM bier2 WHERE id IN (SELECT id FROM bier2 ORDER BY id DESC LIMIT "
 DELETE_LAST_X_ROWS_MACRO_TABLE = "DELETE FROM macro_norm WHERE id IN (SELECT id FROM macro_norm ORDER BY id DESC LIMIT "
+
+DELETE_ALL_ROWS_BACKTEST_TABLE = "DELETE FROM bier_backtest;"
 
 dict_keys_itc = ['id','date', 'mcap', 'mcap_risk', 'close', 'risk_level', 'alt_mcap', 'alt_mcap_risk', 'dxy_usd', 'dxy_usd_risk', 'eth_usd', 'eth_usd_risk', 'bnb_usd', 'bnb_usd_risk', 'sol_usd', 'sol_usd_risk', 'ltc_usd', 'ltc_usd_risk']
 
@@ -727,6 +745,90 @@ def read_bier_category_weight():
             for t in tuples:
                 list_dicts.append(dict(zip(dict_keys_bier_category_weight, t)))
             return list_dicts
+
+
+# ----------------------------- Backtest Table Functions --------------------------------------------------
+
+# ----------------------------- Backtest Table Functions --------------------------------------------------
+
+def create_bier_backtest_table():
+    with psycopg2.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(CREATE_BIER_BACKTEST_TABLE)
+    return
+
+def get_test_metrics():
+    """
+    Get list of metrics where test = 1 in bier_categories table.
+    """
+    with psycopg2.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT metric FROM bier_categories WHERE test = 1;")
+            tuples = cursor.fetchall()
+            return [t[0] for t in tuples]
+
+def sync_backtest_columns(metrics_list):
+    """
+    Checks if columns for metrics exist in bier_backtest, adds them if not.
+    """
+    with psycopg2.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cursor:
+            # Get existing columns
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'bier_backtest';")
+            existing_columns = [t[0] for t in cursor.fetchall()]
+            
+            for metric in metrics_list:
+                # Sanitize metric name to be safe for column name (lowercase)
+                col_name = metric.lower()
+                if col_name not in existing_columns:
+                    print(f"Adding column {col_name} to bier_backtest")
+                    cursor.execute(f"ALTER TABLE bier_backtest ADD COLUMN {col_name} REAL DEFAULT 0;")
+
+def save_backtest_row(data_dict):
+    """
+    Dynamically inserts a row into bier_backtest.
+    data_dict keys must match column names.
+    """
+    if not data_dict:
+        return
+
+    columns = list(data_dict.keys())
+    values = list(data_dict.values())
+    
+    placeholders = ",".join(["%s"] * len(values))
+    columns_str = ",".join(columns)
+    
+    query = f"INSERT INTO bier_backtest ({columns_str}) VALUES ({placeholders});"
+    
+    with psycopg2.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(query, tuple(values))
+
+def read_backtest_table():
+    with psycopg2.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(SELECT_ALL_ROWS_BIER_BACKTEST_TABLE)
+            columns = [desc[0] for desc in cursor.description]
+            tuples = cursor.fetchall()
+            list_dicts = []
+            for t in tuples:
+                list_dicts.append(dict(zip(columns, t)))
+            return pd.DataFrame(list_dicts)
+
+def delete_bier_backtest_table_content():
+    """
+    Deletes all rows from the bier_backtest table using a fresh connection with autocommit.
+    """
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.autocommit = True
+        with conn.cursor() as cursor:
+            cursor.execute(DELETE_ALL_ROWS_BACKTEST_TABLE)
+        conn.close()
+        print("Backtest table deleted successfully.")
+    except Exception as e:
+        print(f"Error deleting backtest table: {e}")
+    return
 
 
 def get_all_metrics():

@@ -20,6 +20,7 @@ st.set_page_config(page_title="BIER5_AG Strategy Dashboard", layout="wide")
 from modules import database
 from modules import matrix_strategy
 from modules import graphs
+from modules import backtest
 
 # --- CSS for Premium Look ---
 # Default Streamlit dark mode should handle this better without custom background overrides.
@@ -92,6 +93,26 @@ if category_sel == 'custom':
 # Update Button
 update_graphs = st.sidebar.button("UPDATE DASHBOARD", type="primary")
 
+st.sidebar.markdown("---")
+# Backtest Section
+st.sidebar.header('Batch Backtest')
+if st.sidebar.button('Run Backtest Batch'):
+  with st.spinner('Running Batch Backtest...'):
+      # Convert dates to string format required by backtest logic
+      bt_start_str = start_date.strftime('%Y-%m-%d')
+      bt_end_str = end_date.strftime('%Y-%m-%d')
+      result_msg = backtest.run_batch_backtest(bt_start_str, bt_end_str, asset, signal_strategy, use_alt_signal, alt_signal_deviation)
+      st.sidebar.success(result_msg)
+
+if st.sidebar.button("Show Backtest Results"):
+    st.session_state['show_backtest_results'] = True
+    st.rerun()
+
+if st.sidebar.button("Clear Backtest History", type="secondary"):
+    database.delete_bier_backtest_table_content()
+    st.sidebar.success("Backtest history cleared!")
+    st.rerun()
+
 # --- Data Loading ---
 @st.cache_data(ttl=3600)
 def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, use_alt_signal=False, alt_signal_deviation=5, custom_metrics_list=None):
@@ -129,12 +150,6 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, use_
             df = matrix_strategy.calc_alternative_signal(df, 'invest_score', deviation=alt_signal_deviation)
         else:
             df = matrix_strategy.calc_signal(df, 'invest_score', deviation=alt_signal_deviation)            
-            '''df['invest_score_ma'] = matrix_strategy.matrix_strategy().double_hull_ma(df['invest_score'], 5, 5)
-            df = matrix_strategy.calc_peaks_valleys(df, 'invest_score_ma', peak_min=50, vert_dist=0, peak_dist=2, peak_width=0, peak_prominence=10, filt_double_extremes=False)
-            df['extremes'] = df['peaks'].shift(6).fillna(0) - df['valleys'].shift(6).fillna(0)
-            df['extremes'] = df['extremes'].replace(0, np.nan)
-            df['extremes'] = df['extremes'].ffill(axis='rows')
-            df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)'''
         
         # Add range column (for signal strategy compatibility)
         df['range'] = np.where((df['invest_score'] == 50), 1, np.nan)
@@ -177,7 +192,7 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, use_
 # --- Main Dashboard ---
 st.title("BIER Strategy Dashboard")
 
-if update_graphs or 'data_loaded' not in st.session_state:
+if update_graphs or 'data_loaded' not in st.session_state or st.session_state.get('show_backtest_results', False):
     st.session_state.data_loaded = True
     
     with st.spinner("Calculating performance and generating charts..."):
@@ -210,7 +225,7 @@ if update_graphs or 'data_loaded' not in st.session_state:
         st.markdown("---")
 
         # --- TABS FOR BETTER ORGANIZATION ---
-        tab1, tab2 = st.tabs(["Main Overview", "Deep Dive: Categories"])
+        tab1, tab2, tab3 = st.tabs(["Main Overview", "Deep Dive: Categories", "Backtest Evaluation"])
 
         with tab1:
             # Row 1: Price Chart & Radar
@@ -250,6 +265,209 @@ if update_graphs or 'data_loaded' not in st.session_state:
             st.subheader("Individual Metric Signals")
             norm_chart_json = graphs.update_norm_chart(calc_json, category_sel, show_raw_data, signal_strategy, custom_metrics if category_sel == 'custom' else None, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
             st.plotly_chart(pio.from_json(norm_chart_json), width='stretch', key="norm_chart")
+
+        with tab3:
+            st.subheader("Backtest Evaluation")
+            
+            if st.session_state.get('show_backtest_results', False):
+                st.markdown("Results from the Batch Backtest run.")
+                
+                # Read backtest table
+                df_bt_res = database.read_backtest_table()
+                
+                if not df_bt_res.empty:
+                    # Summary Stats - Top of page with 5 columns
+                    st.subheader("Best Performers")
+                    kpi_b1, kpi_b2, kpi_b3, kpi_b4, kpi_b5 = st.columns(5)
+                    
+                    best_return = df_bt_res.loc[df_bt_res['return'].idxmax()]
+                    best_sharpe = df_bt_res.loc[df_bt_res['sharpe'].idxmax()]
+                    best_sortino = df_bt_res.loc[df_bt_res['sortino'].idxmax()]
+                    best_calmar = df_bt_res.loc[df_bt_res['calmar'].idxmax()]
+                    
+                    # For max_dd, find smallest absolute value (excluding 0)
+                    df_dd_nonzero = df_bt_res[df_bt_res['max_dd'] != 0].copy()
+                    if not df_dd_nonzero.empty:
+                        df_dd_nonzero['abs_dd'] = df_dd_nonzero['max_dd'].abs()
+                        best_dd = df_dd_nonzero.loc[df_dd_nonzero['abs_dd'].idxmin()]
+                    else:
+                        best_dd = None
+                    
+                    kpi_b1.metric("Best Return", f"{best_return['return']:.2f}%", f"{best_return.get('name', 'Unknown')}")
+                    if best_dd is not None:
+                        kpi_b2.metric("Best Max DD", f"{best_dd['max_dd']:.2f}%", f"{best_dd.get('name', 'Unknown')}")
+                    else:
+                        kpi_b2.metric("Best Max DD", "N/A", "No data")
+                    kpi_b3.metric("Best Sharpe", f"{best_sharpe['sharpe']:.2f}", f"{best_sharpe.get('name', 'Unknown')}")
+                    kpi_b4.metric("Best Sortino", f"{best_sortino['sortino']:.2f}", f"{best_sortino.get('name', 'Unknown')}")
+                    kpi_b5.metric("Best Calmar", f"{best_calmar['calmar']:.2f}", f"{best_calmar.get('name', 'Unknown')}")
+                    
+                    st.markdown("---")
+                    
+                    # Filter Controls
+                    st.subheader("Filter Results")
+                    filter_col1, filter_col2, filter_col3, filter_col4, filter_col5 = st.columns(5)
+                    
+                    with filter_col1:
+                        filter_return = st.number_input("Return > (%)", value=None, step=1.0, format="%.1f", help="Show only results with return greater than this value")
+                    with filter_col2:
+                        filter_max_dd = st.number_input("Max DD < (abs %)", value=None, step=1.0, format="%.1f", help="Show only results with absolute max drawdown less than this value")
+                    with filter_col3:
+                        filter_sharpe = st.number_input("Sharpe >", value=None, step=0.1, format="%.2f", help="Show only results with Sharpe ratio greater than this value")
+                    with filter_col4:
+                        filter_sortino = st.number_input("Sortino >", value=None, step=0.1, format="%.2f", help="Show only results with Sortino ratio greater than this value")
+                    with filter_col5:
+                        filter_calmar = st.number_input("Calmar >", value=None, step=0.1, format="%.2f", help="Show only results with Calmar ratio greater than this value")
+                    
+                    # Apply filters
+                    df_filtered = df_bt_res.copy()
+                    active_filters = []
+                    
+                    if filter_return is not None:
+                        df_filtered = df_filtered[df_filtered['return'] > filter_return]
+                        active_filters.append(f"Return > {filter_return}%")
+                    
+                    if filter_max_dd is not None:
+                        df_filtered = df_filtered[df_filtered['max_dd'].abs() < filter_max_dd]
+                        active_filters.append(f"Max DD < {filter_max_dd}%")
+                    
+                    if filter_sharpe is not None:
+                        df_filtered = df_filtered[df_filtered['sharpe'] > filter_sharpe]
+                        active_filters.append(f"Sharpe > {filter_sharpe}")
+                    
+                    if filter_sortino is not None:
+                        df_filtered = df_filtered[df_filtered['sortino'] > filter_sortino]
+                        active_filters.append(f"Sortino > {filter_sortino}")
+                    
+                    if filter_calmar is not None:
+                        df_filtered = df_filtered[df_filtered['calmar'] > filter_calmar]
+                        active_filters.append(f"Calmar > {filter_calmar}")
+                    
+                    # Show active filters and result count
+                    if active_filters:
+                        st.info(f"**Active Filters:** {' AND '.join(active_filters)} | **Results:** {len(df_filtered)} of {len(df_bt_res)}")
+                    else:
+                        st.info(f"**No filters active** | **Total Results:** {len(df_bt_res)}")
+                    
+                    # Define standard columns to show
+                    std_cols = ['id', 'test_run', 'date', 'name', 'start_date', 'end_date', 'signal_strategy', 'return', 'max_dd', 'sharpe', 'sortino', 'calmar']
+                    
+                    # Filter to only show standard columns (hide metric columns)
+                    display_cols = [c for c in std_cols if c in df_filtered.columns]
+                    df_display = df_filtered[display_cols]
+                    
+                    st.dataframe(df_display, use_container_width=True)
+                    
+                    # Top 10 Performance Charts
+                    st.markdown("---")
+                    st.subheader("Top 10 Performers by Metric")
+                    
+                    # Create 5 columns for the charts
+                    chart_col1, chart_col2 = st.columns(2)
+                    chart_col3, chart_col4 = st.columns(2)
+                    chart_col5 = st.container()
+                    
+                    with chart_col1:
+                        st.markdown("**Top 10 by Return**")
+                        top_return = df_bt_res.nlargest(10, 'return')[['name', 'return']]
+                        fig_return = go.Figure(go.Bar(
+                            x=top_return['return'],
+                            y=top_return['name'],
+                            orientation='h',
+                            marker=dict(color='green')
+                        ))
+                        fig_return.update_layout(
+                            height=400,
+                            xaxis_title="Return (%)",
+                            yaxis_title="",
+                            showlegend=False,
+                            margin=dict(l=0, r=0, t=20, b=0)
+                        )
+                        st.plotly_chart(fig_return, use_container_width=True)
+                    
+                    with chart_col2:
+                        st.markdown("**Top 10 by Sharpe Ratio**")
+                        top_sharpe = df_bt_res.nlargest(10, 'sharpe')[['name', 'sharpe']]
+                        fig_sharpe = go.Figure(go.Bar(
+                            x=top_sharpe['sharpe'],
+                            y=top_sharpe['name'],
+                            orientation='h',
+                            marker=dict(color='blue')
+                        ))
+                        fig_sharpe.update_layout(
+                            height=400,
+                            xaxis_title="Sharpe Ratio",
+                            yaxis_title="",
+                            showlegend=False,
+                            margin=dict(l=0, r=0, t=20, b=0)
+                        )
+                        st.plotly_chart(fig_sharpe, use_container_width=True)
+                    
+                    with chart_col3:
+                        st.markdown("**Top 10 by Sortino Ratio**")
+                        top_sortino = df_bt_res.nlargest(10, 'sortino')[['name', 'sortino']]
+                        fig_sortino = go.Figure(go.Bar(
+                            x=top_sortino['sortino'],
+                            y=top_sortino['name'],
+                            orientation='h',
+                            marker=dict(color='purple')
+                        ))
+                        fig_sortino.update_layout(
+                            height=400,
+                            xaxis_title="Sortino Ratio",
+                            yaxis_title="",
+                            showlegend=False,
+                            margin=dict(l=0, r=0, t=20, b=0)
+                        )
+                        st.plotly_chart(fig_sortino, use_container_width=True)
+                    
+                    with chart_col4:
+                        st.markdown("**Top 10 by Calmar Ratio**")
+                        top_calmar = df_bt_res.nlargest(10, 'calmar')[['name', 'calmar']]
+                        fig_calmar = go.Figure(go.Bar(
+                            x=top_calmar['calmar'],
+                            y=top_calmar['name'],
+                            orientation='h',
+                            marker=dict(color='orange')
+                        ))
+                        fig_calmar.update_layout(
+                            height=400,
+                            xaxis_title="Calmar Ratio",
+                            yaxis_title="",
+                            showlegend=False,
+                            margin=dict(l=0, r=0, t=20, b=0)
+                        )
+                        st.plotly_chart(fig_calmar, use_container_width=True)
+                    
+                    with chart_col5:
+                        st.markdown("**Top 10 by Max Drawdown (Smallest)**")
+                        # Filter out 0 values and get smallest absolute drawdowns
+                        df_dd_filtered = df_bt_res[df_bt_res['max_dd'] != 0].copy()
+                        if not df_dd_filtered.empty:
+                            df_dd_filtered['abs_dd'] = df_dd_filtered['max_dd'].abs()
+                            top_dd = df_dd_filtered.nsmallest(10, 'abs_dd')[['name', 'max_dd', 'abs_dd']]
+                            fig_dd = go.Figure(go.Bar(
+                                x=top_dd['abs_dd'],
+                                y=top_dd['name'],
+                                orientation='h',
+                                marker=dict(color='red')
+                            ))
+                            fig_dd.update_layout(
+                                height=400,
+                                xaxis_title="Max Drawdown (%) - Absolute Value",
+                                yaxis_title="",
+                                showlegend=False,
+                                margin=dict(l=0, r=0, t=20, b=0)
+                            )
+                            st.plotly_chart(fig_dd, use_container_width=True)
+                        else:
+                            st.info("No valid drawdown data available.")
+                else:
+                    st.info("No backtest results found. Run a batch backtest from the sidebar.")
+            else:
+                st.info("Click 'Show Backtest Results' in the sidebar to view results.")
+            
+
 
 st.sidebar.markdown("---")
 st.sidebar.info("Dashboard built with Streamlit and BIER Database.")
