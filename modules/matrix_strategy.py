@@ -411,82 +411,76 @@ def calc_trade_status(df):
 
     return df
 
-def calc_alternative_signal(df, score_col='invest_score', deviation=5):
+from .peak_detector import BitcoinPeakDetector
+
+def calc_alternative_signal(df, score_col='invest_score', deviation=10):
     """
-    Calculates peaks and valleys using a non-repainting ZigZag-like algorithm.
-    Incorporates regime bias:
-    - Low Score (<30): Easier to trigger Buy/Trough (smaller deviation).
-    - High Score (>70): Easier to trigger Sell/Peak (smaller deviation).
+    Calculates peaks and valleys using the 3-Method Voting approach.
+    Methods: Slope-based, Bayesian Change Point, EWMA Adaptive.
+    
+    deviation: Sensitivity slider value (1-20). Default around 10.
+    Higher deviation = Less sensitive = Larger window, Lower hazard, Lower lambda.
+    Lower deviation = More sensitive = Smaller window, Higher hazard, Higher lambda.
     """
-    invest_score = df[score_col].values
-    n = len(invest_score)
+    if df.empty:
+        df['peaks'] = np.nan
+        df['valleys'] = np.nan
+        df['invested'] = np.nan
+        df['extremes'] = np.nan
+        return df
+
+    # Base parameters for sensitivity = 10
+    base_window = 10
+    base_hazard = 1/50 # 0.02
+    base_lambda = 0.2
     
-    # Initialize arrays
-    peaks = np.full(n, np.nan)
-    valleys = np.full(n, np.nan)
-    invested = np.full(n, np.nan)
+    # Calculate scaling factor relative to 10
+    # Avoid division by zero if deviation is 0 (though min slider is 1)
+    safe_deviation = max(deviation, 1)
+    factor = safe_deviation / 10.0
     
-    # State variables
-    trend = 1 # 1 = Up/Invested, -1 = Down/Sold
-    last_val = invest_score[0]
-    last_high = invest_score[0]
-    last_low = invest_score[0]
-    last_high_idx = 0
-    last_low_idx = 0
+    # Adjust parameters
+    # More sensitive (factor < 1) -> Smaller window, Higher hazard/lambda
+    # Less sensitive (factor > 1) -> Larger window, Lower hazard/lambda
     
-    # Loop through data (start from index 1)
-    for i in range(1, n):
-        val = invest_score[i]
-        
-        # Dynamic deviations based on regime
-        buy_dev = deviation
-        sell_dev = deviation
-        
-        # Bias: easier to buy when score is low, easier to sell when score is high
-        if val < 30:
-            buy_dev = deviation * 0.5 
-        elif val > 70:
-            sell_dev = deviation * 0.5 
+    adj_window = int(base_window * factor)
+    adj_hazard = base_hazard / factor
+    adj_lambda = base_lambda / factor
+    
+    # Ensure reasonable bounds
+    adj_window = max(adj_window, 3) 
+    adj_hazard = min(max(adj_hazard, 0.001), 0.5)
+    adj_lambda = min(max(adj_lambda, 0.01), 0.9)
+
+    print(f"Alt Signal Params: Dev={safe_deviation}, Win={adj_window}, Haz={adj_hazard:.4f}, Lam={adj_lambda:.2f}")
+
+    detector = BitcoinPeakDetector(window_slope=adj_window, hazard_rate=adj_hazard, ewma_lambda=adj_lambda)
+    
+    peaks, valleys, conf = detector.detect_full_series(df[score_col])
+    
+    df['peaks'] = np.where(peaks == 1, 1, np.nan)
+    df['valleys'] = np.where(valleys == 1, 1, np.nan)
+    df['signal_conf'] = conf
+    
+    # Construct Invested State
+    # Rule: Invested after Valley, Divested after Peak
+    invested = np.full(len(df), np.nan)
+    current_state = np.nan # Nan = unknown, 1 = invested, 0 = divested
+    
+    # Initialize based on first signal
+    # Or default to divested if score < 50?
+    
+    for i in range(len(df)):
+        if peaks[i] == 1:
+            current_state = np.nan # Divest
+        elif valleys[i] == 1:
+            current_state = 1 # Invest
             
-        if trend == 1: # Currently Invested (Looking for Peak/Sell)
-            if val > last_high:
-                last_high = val
-                last_high_idx = i
-            elif val < last_high - sell_dev:
-                # Reversal DOWN (Peak confirmed)
-                trend = -1
-                last_low = val
-                last_low_idx = i
-                peaks[i] = 1 # Mark peak trigger at confirmation point
-                # Ideally mark the actual peak, but for trading signal we act NOW
-                # If we want to visualize the actual peak: peaks[last_high_idx] = 1
-                # User wants "Signal logic... based on peak and trough"
-                # "If score is between trough and peak -> Invested"
-                # Peak confirmed means we are now AFTER the peak, so Divested.
+        invested[i] = current_state
         
-        elif trend == -1: # Currently Sold (Looking for Trough/Buy)
-            if val < last_low:
-                last_low = val
-                last_low_idx = i
-            elif val > last_low + buy_dev:
-                # Reversal UP (Trough confirmed)
-                trend = 1
-                last_high = val
-                last_high_idx = i
-                valleys[i] = 1 # Mark trough trigger
-                
-        # Set invested status based on trend
-        # Trend 1: Moving UP from Trough (Invested)
-        # Trend -1: Moving DOWN from Peak (Sold)
-        if trend == 1:
-            invested[i] = 1
-        else:
-            invested[i] = np.nan
-            
-    df['peaks'] = peaks
-    df['valleys'] = valleys
     df['invested'] = invested
-    # Extremes logic for compatibility (optional, but 'invested' is what matters)
+    
+    # Extremes logic for compatibility
     df['extremes'] = np.where(df['valleys'] == 1, -1, np.where(df['peaks'] == 1, 1, np.nan))
     
     return df

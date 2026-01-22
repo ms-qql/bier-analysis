@@ -45,7 +45,7 @@ norm_lookback = 0 #4 * 360 # use 4 year lookback for normalization (equals to on
 
 
 
-def update_price_chart(calc_json, signal_strategy, category, risk_weight, market_weight, mining_weight, macro_weight, sentiment_weight, hodl_weight, shortterm_weight, custom_weight, single_weight, use_alt_signal=False):  
+def update_price_chart(calc_json, signal_strategy, category, risk_weight, market_weight, mining_weight, macro_weight, sentiment_weight, hodl_weight, shortterm_weight, custom_weight, single_weight, use_alt_signal=False, alt_signal_deviation=10):  
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition 
   
@@ -58,9 +58,20 @@ def update_price_chart(calc_json, signal_strategy, category, risk_weight, market
       y_axis_invested = df['invest_score']
   else:
       metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
-      df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy, use_alt_signal)
+      df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy, use_alt_signal, alt_signal_deviation)
       y_axis_invested = df['invest_score']       
   
+  matrix = matrix_strategy.matrix_strategy()
+  # Re-calculate invested signal using Norm Chart logic (Double Smoothing + Standard Peaks) to ensure consistency
+  # This overrides the default or alternative signal from calc_multi_strategy to match the "Deep Dive" visualization
+  df['score_ma'] = matrix.double_hull_ma(df['invest_score'], 5, 5)
+  df = matrix_strategy.calc_peaks_valleys(df, 'score_ma', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)
+  df = df.copy()
+  df['extremes'] = df['peaks'].shift(peak_shift).fillna(0) - df['valleys'].shift(peak_shift).fillna(0)
+  df['extremes'] = df['extremes'].replace(0, np.nan)
+  df['extremes'] = df['extremes'].ffill(axis = 0)
+  df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
+
   print('Price Graph: ', df.tail(3), df.info())
 
   df = df.iloc[norm_lookback:-1] # use only data after lookback period & without last incomplete bar
@@ -116,7 +127,7 @@ def update_price_chart(calc_json, signal_strategy, category, risk_weight, market
 
 
 
-def update_category_chart(calc_json, signal_strategy, category, use_alt_signal=False):  
+def update_category_chart(calc_json, signal_strategy, category, use_alt_signal=False, alt_signal_deviation=10):  
   matrix = matrix_strategy.matrix_strategy()
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition 
@@ -143,7 +154,7 @@ def update_category_chart(calc_json, signal_strategy, category, use_alt_signal=F
        if not metrics_list:
             print(f"Skipping category {category} because it has no metrics.")
             continue
-       df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy, use_alt_signal)
+       df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy, use_alt_signal, alt_signal_deviation)
        #print('Category Graph: ', df.columns)
        
        if result_df is None:
@@ -210,13 +221,20 @@ def update_category_chart(calc_json, signal_strategy, category, use_alt_signal=F
   
   df_plot['close_norm'] = matrix.calc_norm(df_plot['close']) 
   
-  df_plot['score_ma'] = matrix.double_hull_ma(result_df_plot['total_score'], 5, 5) 
-  df_plot = matrix_strategy.calc_peaks_valleys(df_plot, 'score_ma', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)   
-  df_plot = df_plot.copy()  # Defragment DataFrame
-  df_plot['extremes'] = df_plot['peaks'].shift(peak_shift).fillna(0) - df_plot['valleys'].shift(peak_shift).fillna(0)
-  df_plot['extremes'] = df_plot['extremes'].replace(0, np.nan)
-  df_plot['extremes'] = df_plot['extremes'].ffill(axis ='rows') 
-  df_plot['invested_total'] = np.where((df_plot['extremes'] < 0), 1, np.nan)  
+  if use_alt_signal:
+      # Use alternative signal logic on total_score
+      temp_df = pd.DataFrame({'invest_score': result_df['total_score']})
+      temp_df = matrix_strategy.calc_alternative_signal(temp_df, 'invest_score', deviation=alt_signal_deviation)
+      total_invested_full = temp_df['invested'].values
+      df_plot['invested_total'] = total_invested_full[norm_lookback:][:len(df_plot)]
+  else:
+      df_plot['score_ma'] = matrix.double_hull_ma(result_df_plot['total_score'], 5, 5) 
+      df_plot = matrix_strategy.calc_peaks_valleys(df_plot, 'score_ma', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)   
+      df_plot = df_plot.copy()  # Defragment DataFrame
+      df_plot['extremes'] = df_plot['peaks'].shift(peak_shift).fillna(0) - df_plot['valleys'].shift(peak_shift).fillna(0)
+      df_plot['extremes'] = df_plot['extremes'].replace(0, np.nan)
+      df_plot['extremes'] = df_plot['extremes'].ffill(axis ='rows') 
+      df_plot['invested_total'] = np.where((df_plot['extremes'] < 0), 1, np.nan)  
 
   fig.add_trace(go.Scatter(            
                 x = df_plot['date'],   
@@ -460,7 +478,7 @@ def update_signal_chart(calc_json, signal_strategy, category, custom_metrics=Non
 
 
 
-def update_norm_chart(calc_json, category, raw_data, signal_strategy, custom_metrics=None, use_alt_signal=False):  
+def update_norm_chart(calc_json, category, raw_data, signal_strategy, custom_metrics=None, use_alt_signal=False, alt_signal_deviation=10):  
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6
   #print('Norm Graph DF: ', df, df.columns)

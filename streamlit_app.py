@@ -58,7 +58,7 @@ show_raw_data = st.sidebar.checkbox("Show Raw Data", value=False)
 signal_strategy = st.sidebar.checkbox("Use Signal Strategy", value=True)
 use_alt_signal = st.sidebar.checkbox("Use Alternative Signal Logic", value=False, help="Enable non-repainting peak/trough detection with regime bias")
 if use_alt_signal:
-    alt_signal_deviation = st.sidebar.slider("Signal Sensitivity", min_value=1, max_value=20, value=10, help="Higher value = less sensitive (fewer trades). Lower value = more sensitive.")
+    alt_signal_deviation = st.sidebar.slider("Signal Sensitivity", min_value=1, max_value=20, value=5, help="Higher value = less sensitive (fewer trades). Lower value = more sensitive.")
 else:
     alt_signal_deviation = 5 # default value
 
@@ -153,6 +153,20 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, use_
         metrics_list, _ = database.load_category_list(cat_sel, metric='', df=df_cat)
         df = matrix_strategy.calc_multi_strategy(df, 6, metrics_list, use_sig, use_alt_signal, alt_signal_deviation)
     
+    # Force consistent signal logic (Double Hull MA + Peak Detection) to match Price Chart
+    # This ensures KPIs, Equity, and Drawdown charts match the visual signals
+    matrix = matrix_strategy.matrix_strategy()
+    df['score_ma'] = matrix.double_hull_ma(df['invest_score'], 5, 5)
+    df = matrix_strategy.calc_peaks_valleys(df, 'score_ma', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)
+    
+    # Recalculate invested status
+    peak_shift = 6
+    df = df.copy() # Defragment
+    df['extremes'] = df['peaks'].shift(peak_shift).fillna(0) - df['valleys'].shift(peak_shift).fillna(0)
+    df['extremes'] = df['extremes'].replace(0, np.nan)
+    df['extremes'] = df['extremes'].ffill(axis = 0)
+    df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
+
     # Update json_res to include the calculated invest_score for all_categories and custom
     if cat_sel == 'all_categories' or cat_sel == 'custom':
         json_res = df.to_json(orient='records')
@@ -202,7 +216,7 @@ if update_graphs or 'data_loaded' not in st.session_state:
             col_left, col_right = st.columns([3, 1])
             with col_left:
                 st.subheader("Price & Invested Signal")
-                price_chart_json = graphs.update_price_chart(calc_json, signal_strategy, category_sel, 0,0,0,0,0,0,0,0,0, use_alt_signal=use_alt_signal)
+                price_chart_json = graphs.update_price_chart(calc_json, signal_strategy, category_sel, 0,0,0,0,0,0,0,0,0, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
                 st.plotly_chart(pio.from_json(price_chart_json), width='stretch', key="price_chart")
             with col_right:
                 st.subheader("Regime Health")
@@ -229,11 +243,11 @@ if update_graphs or 'data_loaded' not in st.session_state:
 
         with tab2:
             st.subheader("Cumulative Category Scores")
-            cat_chart_json = graphs.update_category_chart(calc_json, signal_strategy, category_sel, use_alt_signal=use_alt_signal)
+            cat_chart_json = graphs.update_category_chart(calc_json, signal_strategy, category_sel, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
             st.plotly_chart(pio.from_json(cat_chart_json), width='stretch', key="cat_chart")
 
             st.subheader("Individual Metric Signals")
-            norm_chart_json = graphs.update_norm_chart(calc_json, category_sel, show_raw_data, signal_strategy, custom_metrics if category_sel == 'custom' else None, use_alt_signal=use_alt_signal)
+            norm_chart_json = graphs.update_norm_chart(calc_json, category_sel, show_raw_data, signal_strategy, custom_metrics if category_sel == 'custom' else None, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
             st.plotly_chart(pio.from_json(norm_chart_json), width='stretch', key="norm_chart")
 
 st.sidebar.markdown("---")
