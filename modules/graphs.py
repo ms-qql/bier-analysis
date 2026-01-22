@@ -45,7 +45,7 @@ norm_lookback = 0 #4 * 360 # use 4 year lookback for normalization (equals to on
 
 
 
-def update_price_chart(calc_json, signal_strategy, category, risk_weight, market_weight, mining_weight, macro_weight, sentiment_weight, hodl_weight, shortterm_weight, custom_weight, single_weight):  
+def update_price_chart(calc_json, signal_strategy, category, risk_weight, market_weight, mining_weight, macro_weight, sentiment_weight, hodl_weight, shortterm_weight, custom_weight, single_weight, use_alt_signal=False):  
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition 
   
@@ -58,7 +58,7 @@ def update_price_chart(calc_json, signal_strategy, category, risk_weight, market
       y_axis_invested = df['invest_score']
   else:
       metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
-      df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy)
+      df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy, use_alt_signal)
       y_axis_invested = df['invest_score']       
   
   print('Price Graph: ', df.tail(3), df.info())
@@ -104,19 +104,19 @@ def update_price_chart(calc_json, signal_strategy, category, risk_weight, market
   fig.update_layout(
       title = charttitle_price,
       xaxis=dict(range=[x_axis.min(), x_axis.max()]),  # Stretch to full data range
-      yaxis=dict(title='Price'),
-      yaxis2=dict(title='Score', overlaying='y', side='right'),    
+      yaxis=dict(title='Price', type='log'),
+      yaxis2=dict(title='Score', overlaying='y', side='right', type='linear'),    
       legend={'orientation':'h'},
       paper_bgcolor= 'rgba(0,0,0,0)', # Transparent
       plot_bgcolor= 'rgba(0,0,0,0)') # Transparent
-  fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='silver',zeroline=True, zerolinewidth=2, zerolinecolor='silver', type='log')
+  fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='silver',zeroline=True, zerolinewidth=2, zerolinecolor='silver')
 
   return fig.to_json() 
 
 
 
 
-def update_category_chart(calc_json, signal_strategy, category):  
+def update_category_chart(calc_json, signal_strategy, category, use_alt_signal=False):  
   matrix = matrix_strategy.matrix_strategy()
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition 
@@ -143,7 +143,7 @@ def update_category_chart(calc_json, signal_strategy, category):
        if not metrics_list:
             print(f"Skipping category {category} because it has no metrics.")
             continue
-       df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy)
+       df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy, use_alt_signal)
        #print('Category Graph: ', df.columns)
        
        if result_df is None:
@@ -460,7 +460,7 @@ def update_signal_chart(calc_json, signal_strategy, category, custom_metrics=Non
 
 
 
-def update_norm_chart(calc_json, category, raw_data, signal_strategy, custom_metrics=None):  
+def update_norm_chart(calc_json, category, raw_data, signal_strategy, custom_metrics=None, use_alt_signal=False):  
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6
   #print('Norm Graph DF: ', df, df.columns)
@@ -482,13 +482,53 @@ def update_norm_chart(calc_json, category, raw_data, signal_strategy, custom_met
       print("Metrics Norm: ", metrics_list_norm)         
 
   x_axis = df['date']
-  y_axis_price = matrix.calc_norm(df['close']) if not raw_data else df['close']
+  
+  # Calculate Total Score based on the metrics in the chart
+  # Note: logic behaves similar to update_category_chart but scoped to the selected metrics
+  df_total = matrix_strategy.calc_multi_strategy(df.copy(), peak_shift, metrics_list, signal_strategy, use_alt_signal)
+  total_score = df_total['invest_score']
+
+  # Calculate BIER Invested signals (Peaks/Valleys on Total Score)
+  # Using logic from update_category_chart
+  df_total['score_ma'] = matrix.double_hull_ma(total_score, 5, 5)
+  df_total = matrix_strategy.calc_peaks_valleys(df_total, 'score_ma', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)
+  df_total = df_total.copy()
+  df_total['extremes'] = df_total['peaks'].shift(peak_shift).fillna(0) - df_total['valleys'].shift(peak_shift).fillna(0)
+  df_total['extremes'] = df_total['extremes'].replace(0, np.nan)
+  # Note: update_category_chart uses ffill for extremes
+  df_total['extremes'] = df_total['extremes'].ffill(axis = 0)
+  df_total['invested_total'] = np.where((df_total['extremes'] < 0), 1, np.nan)
+
+  # Determine Price Y-axis
+  if raw_data:
+      y_axis_price = df['close']
+      price_name = 'Price' 
+  else:
+      y_axis_price = matrix.calc_norm(df['close'])
+      price_name = 'price'
 
   fig = go.Figure(go.Scatter(
           x = x_axis, 
           y = y_axis_price,
           mode = 'lines',
-          name = 'Price'))        
+          line = dict(width=3, color='red'),
+          name = price_name)) 
+
+  # Add Total Score
+  fig.add_trace(go.Scatter(          
+                x=x_axis,   
+                y=total_score, 
+                mode='lines',
+                line=dict(width=3, color='blue'),
+                name='Total Score'))
+
+  # Add BIER Invested (dots on Price line)
+  fig.add_trace( go.Scatter(  
+          x = x_axis,   
+          y = df_total['invested_total'] * y_axis_price, 
+          mode = 'markers',
+          marker = dict(color='green'),    
+          name = 'BIER invested'))
 
   # Plot individual metric signals (similar to signal chart)
   for metric in metrics_list:

@@ -344,22 +344,31 @@ def calc_strategy(df, peak_shift, risk_weight, market_weight, mining_weight, mac
   df = calc_peaks_valleys(df, 'strategy_ma', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)   
   #peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition    
   df['extremes'] = df['peaks'].shift(peak_shift).fillna(0) - df['valleys'].shift(peak_shift).fillna(0)
-  df['extremes'].replace(0, np.nan, inplace=True)
+  df['extremes'] = df['extremes'].replace(0, np.nan)
   df['extremes'] = df['extremes'].ffill(axis ='rows') 
   df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
   
   return df
 
 
-def calc_single_strategy(df_single, peak_shift, metric):
+def calc_single_strategy(df_main, peak_shift, metric, risk_level_norm=None):
   matrix = matrix_strategy()
-
+  
+  # Create a working copy with only necessary columns to avoid fragmentation
+  df_single = df_main[['date', metric]].copy()
+  
   invest_name = metric + '_invested'
   norm_name = metric + '_norm'
   df_single[norm_name] = matrix.calc_norm(df_single[metric], norm_lookback) 
 
   # Merge Macro Index / Risk data
   if metric == 'macro_index':
+    if risk_level_norm is not None:
+         df_single['risk_level_norm'] = risk_level_norm.values
+    else:
+         # Fallback if not passed (should not happen if ordered correctly)
+         df_single['risk_level_norm'] = 0
+         
     macro_cond = [df_single['date'] <= '2015-02-09',  df_single['date'] >= '2016-03-06'] # '2015-01-14'
     macro_category = [df_single['risk_level_norm'], df_single['macro_index_norm']]  # BMP for old data, Capriole for newer 
     df_single['macro_index_norm'] = np.select(macro_cond, macro_category)
@@ -369,18 +378,18 @@ def calc_single_strategy(df_single, peak_shift, metric):
   df_single['strategy_ma'] = matrix.double_hull_ma(df_single[norm_name], 8, 8) 
   #df_single['strategy_ma'] = matrix.double_hull_ma(df_single[norm_name], 5, 5) 
   df_single = calc_peaks_valleys(df_single, 'strategy_ma', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)   
-  df_single = df_single.copy()  # Defragment DataFrame
+  #df_single = df_single.copy()  # Defragment DataFrame
   df_single['extremes'] = df_single['peaks'].shift(peak_shift).fillna(0) - df_single['valleys'].shift(peak_shift).fillna(0)
   df_single['extremes'] = df_single['extremes'].replace(0, np.nan)
   df_single['extremes'] = df_single['extremes'].ffill(axis ='rows')  
   df_single[invest_name] = np.where((df_single['extremes'] < 0), 1, np.nan)
-  df_single[invest_name] 
   df_single['trigger_short'] = df_single['peaks']
   df_single['trigger_long'] = df_single['valleys']
-  os.makedirs('data', exist_ok=True)
-  df_single.to_csv(f'data/calc_single_strategy_{metric}.csv')  
+  #os.makedirs('data', exist_ok=True)
+  #df_single.to_csv(f'data/calc_single_strategy_{metric}.csv')  
   
-  return df_single
+  # Return only the new columns we want to keep
+  return df_single[[norm_name, invest_name]]
 
 
 
@@ -402,17 +411,113 @@ def calc_trade_status(df):
 
     return df
 
-def calc_multi_strategy(df, peak_shift, scores_list, use_signal=True):
+def calc_alternative_signal(df, score_col='invest_score', deviation=5):
+    """
+    Calculates peaks and valleys using a non-repainting ZigZag-like algorithm.
+    Incorporates regime bias:
+    - Low Score (<30): Easier to trigger Buy/Trough (smaller deviation).
+    - High Score (>70): Easier to trigger Sell/Peak (smaller deviation).
+    """
+    invest_score = df[score_col].values
+    n = len(invest_score)
+    
+    # Initialize arrays
+    peaks = np.full(n, np.nan)
+    valleys = np.full(n, np.nan)
+    invested = np.full(n, np.nan)
+    
+    # State variables
+    trend = 1 # 1 = Up/Invested, -1 = Down/Sold
+    last_val = invest_score[0]
+    last_high = invest_score[0]
+    last_low = invest_score[0]
+    last_high_idx = 0
+    last_low_idx = 0
+    
+    # Loop through data (start from index 1)
+    for i in range(1, n):
+        val = invest_score[i]
+        
+        # Dynamic deviations based on regime
+        buy_dev = deviation
+        sell_dev = deviation
+        
+        # Bias: easier to buy when score is low, easier to sell when score is high
+        if val < 30:
+            buy_dev = deviation * 0.5 
+        elif val > 70:
+            sell_dev = deviation * 0.5 
+            
+        if trend == 1: # Currently Invested (Looking for Peak/Sell)
+            if val > last_high:
+                last_high = val
+                last_high_idx = i
+            elif val < last_high - sell_dev:
+                # Reversal DOWN (Peak confirmed)
+                trend = -1
+                last_low = val
+                last_low_idx = i
+                peaks[i] = 1 # Mark peak trigger at confirmation point
+                # Ideally mark the actual peak, but for trading signal we act NOW
+                # If we want to visualize the actual peak: peaks[last_high_idx] = 1
+                # User wants "Signal logic... based on peak and trough"
+                # "If score is between trough and peak -> Invested"
+                # Peak confirmed means we are now AFTER the peak, so Divested.
+        
+        elif trend == -1: # Currently Sold (Looking for Trough/Buy)
+            if val < last_low:
+                last_low = val
+                last_low_idx = i
+            elif val > last_low + buy_dev:
+                # Reversal UP (Trough confirmed)
+                trend = 1
+                last_high = val
+                last_high_idx = i
+                valleys[i] = 1 # Mark trough trigger
+                
+        # Set invested status based on trend
+        # Trend 1: Moving UP from Trough (Invested)
+        # Trend -1: Moving DOWN from Peak (Sold)
+        if trend == 1:
+            invested[i] = 1
+        else:
+            invested[i] = np.nan
+            
+    df['peaks'] = peaks
+    df['valleys'] = valleys
+    df['invested'] = invested
+    # Extremes logic for compatibility (optional, but 'invested' is what matters)
+    df['extremes'] = np.where(df['valleys'] == 1, -1, np.where(df['peaks'] == 1, 1, np.nan))
+    
+    return df
+
+def calc_multi_strategy(df, peak_shift, scores_list, use_signal=True, use_alt_signal=False, alt_signal_deviation=5):
   #scores_list = ['nvts', 'mvrv','reserve_risk','rhodl_ratio','nupl', 'macro_index']
   #print('Scores_List: ', scores_list)
   if use_signal:
     # Use adding of scores method    
     invested_list = [] 
+    new_metrics_dfs = []
+    risk_level_norm_series = None
+    
     # Run metrics in list
     for item in scores_list:
       item_invested = item + '_invested'
       invested_list.append(item_invested) # create invested list
-      df = calc_single_strategy(df, peak_shift, item)
+      
+      # Calculate single strategy returning only new cols
+      res_df = calc_single_strategy(df, peak_shift, item, risk_level_norm=risk_level_norm_series)
+      new_metrics_dfs.append(res_df)
+      
+      # Capture risk_level_norm if generated
+      if item == 'risk_level':
+           risk_level_norm_series = res_df['risk_level_norm']
+           
+    # Concatenate all new columns at once to avoid fragmentation
+    if new_metrics_dfs:
+        df_new = pd.concat(new_metrics_dfs, axis=1)
+        df = pd.concat([df, df_new], axis=1)
+        
     df['invest_score'] = df[invested_list].sum(axis = 1)
     if len(scores_list) > 0:
         df['invest_score'] = df['invest_score'].fillna(0) * 100 / len(scores_list)  
@@ -437,14 +542,23 @@ def calc_multi_strategy(df, peak_shift, scores_list, use_signal=True):
     df['invest_score'] = matrix.double_hull_ma(df['strategy'], 5, 5) 
     # Clamp invest_score to 0-100 range (double_hull_ma can overshoot)
     df['invest_score'] = df['invest_score'].clip(lower=0, upper=100)
-    df = calc_peaks_valleys(df, 'invest_score', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)   
-    df['extremes'] = df['peaks'].shift(peak_shift).fillna(0) - df['valleys'].shift(peak_shift).fillna(0)
-    df['extremes'].replace(0, np.nan, inplace=True)
-    df['extremes'] = df['extremes'].ffill(axis ='rows') 
-    df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)    
+    
+    if use_alt_signal:
+        df = calc_alternative_signal(df, 'invest_score', deviation=alt_signal_deviation)
+    else:
+        df = calc_peaks_valleys(df, 'invest_score', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)   
+        df['extremes'] = df['peaks'].shift(peak_shift).fillna(0) - df['valleys'].shift(peak_shift).fillna(0)
+        df['extremes'] = df['extremes'].replace(0, np.nan)
+        df['extremes'] = df['extremes'].ffill(axis ='rows') 
+        df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)    
 
-  df['trigger_short'] = df['peaks']
-  df['trigger_long'] = df['valleys']
+  if not use_signal:
+      df['trigger_short'] = df['peaks']
+      df['trigger_long'] = df['valleys']
+  else:
+      # In Signal Strategy, triggers are primary. Map them to peaks/valleys for visual consistency
+      df['peaks'] = df['trigger_short']
+      df['valleys'] = df['trigger_long']
   os.makedirs('data', exist_ok=True)
   df.to_csv('data/calc_multi_strategy.csv')   
 
@@ -589,7 +703,7 @@ class matrix_strategy():
     def filt_double_peaks_valleys(self, df, peak_col, valley_col):
       # New col with latest extreme status   
       df['extremes'] = df[peak_col].fillna(0) - df[valley_col].fillna(0)
-      df['extremes'].replace(0, np.nan, inplace=True)
+      df['extremes'] = df['extremes'].replace(0, np.nan)
       df['extremes'] = df['extremes'].ffill(axis ='rows') 
       
       df[peak_col] = np.where((df[peak_col] > 0) & (df['extremes'].shift() < 1), 1, np.nan)

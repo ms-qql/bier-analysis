@@ -56,6 +56,11 @@ category_sel = st.sidebar.selectbox("Select Category / Strategy", available_cate
 # Toggles
 show_raw_data = st.sidebar.checkbox("Show Raw Data", value=False)
 signal_strategy = st.sidebar.checkbox("Use Signal Strategy", value=True)
+use_alt_signal = st.sidebar.checkbox("Use Alternative Signal Logic", value=False, help="Enable non-repainting peak/trough detection with regime bias")
+if use_alt_signal:
+    alt_signal_deviation = st.sidebar.slider("Signal Sensitivity", min_value=1, max_value=20, value=10, help="Higher value = less sensitive (fewer trades). Lower value = more sensitive.")
+else:
+    alt_signal_deviation = 5 # default value
 
 # Custom metric selector (shown only when custom category is selected)
 custom_metrics = []
@@ -89,7 +94,7 @@ update_graphs = st.sidebar.button("UPDATE DASHBOARD", type="primary")
 
 # --- Data Loading ---
 @st.cache_data(ttl=3600)
-def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, custom_metrics_list=None):
+def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, use_alt_signal=False, alt_signal_deviation=5, custom_metrics_list=None):
     # This calls the existing matrix_strategy logic
     json_res = matrix_strategy.calc_metric_all(start_str, end_str, "risk_level", asset_name)
     df = pd.read_json(StringIO(json_res), orient='records')
@@ -112,7 +117,7 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, cust
             if weight > 0:
                 metrics_list, _ = database.load_category_list(category, metric='', df=df_cat)
                 if metrics_list:
-                    df_temp = matrix_strategy.calc_multi_strategy(df.copy(), 6, metrics_list, use_sig)
+                    df_temp = matrix_strategy.calc_multi_strategy(df.copy(), 6, metrics_list, use_sig, use_alt_signal, alt_signal_deviation)
                     weighted_sum += df_temp['invest_score'] * weight
                     total_weight += weight
         
@@ -120,12 +125,15 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, cust
         df['invest_score'] = weighted_sum / total_weight if total_weight > 0 else 0
         
         # Calculate invested signal from the weighted score
-        df['invest_score_ma'] = matrix_strategy.matrix_strategy().double_hull_ma(df['invest_score'], 5, 5)
-        df = matrix_strategy.calc_peaks_valleys(df, 'invest_score_ma', peak_min=50, vert_dist=0, peak_dist=2, peak_width=0, peak_prominence=10, filt_double_extremes=False)
-        df['extremes'] = df['peaks'].shift(6).fillna(0) - df['valleys'].shift(6).fillna(0)
-        df['extremes'] = df['extremes'].replace(0, np.nan)
-        df['extremes'] = df['extremes'].ffill(axis='rows')
-        df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
+        if use_alt_signal:
+            df = matrix_strategy.calc_alternative_signal(df, 'invest_score', deviation=alt_signal_deviation)
+        else:
+            df['invest_score_ma'] = matrix_strategy.matrix_strategy().double_hull_ma(df['invest_score'], 5, 5)
+            df = matrix_strategy.calc_peaks_valleys(df, 'invest_score_ma', peak_min=50, vert_dist=0, peak_dist=2, peak_width=0, peak_prominence=10, filt_double_extremes=False)
+            df['extremes'] = df['peaks'].shift(6).fillna(0) - df['valleys'].shift(6).fillna(0)
+            df['extremes'] = df['extremes'].replace(0, np.nan)
+            df['extremes'] = df['extremes'].ffill(axis='rows')
+            df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
         
         # Add range column (for signal strategy compatibility)
         df['range'] = np.where((df['invest_score'] == 50), 1, np.nan)
@@ -135,14 +143,15 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, cust
         df['trigger_long'] = df['valleys']
         
     # If custom category and metrics provided, temporarily update the dataframe
+    # If custom category and metrics provided, temporarily update the dataframe
     elif cat_sel == 'custom' and custom_metrics_list:
         # Temporarily modify df_cat for this calculation
         df_cat['custom'] = df_cat['metric'].isin(custom_metrics_list).astype(int)
         metrics_list, _ = database.load_category_list(cat_sel, metric='', df=df_cat)
-        df = matrix_strategy.calc_multi_strategy(df, 6, metrics_list, use_sig)
+        df = matrix_strategy.calc_multi_strategy(df, 6, metrics_list, use_sig, use_alt_signal, alt_signal_deviation)
     else:
         metrics_list, _ = database.load_category_list(cat_sel, metric='', df=df_cat)
-        df = matrix_strategy.calc_multi_strategy(df, 6, metrics_list, use_sig)
+        df = matrix_strategy.calc_multi_strategy(df, 6, metrics_list, use_sig, use_alt_signal, alt_signal_deviation)
     
     # Update json_res to include the calculated invest_score for all_categories and custom
     if cat_sel == 'all_categories' or cat_sel == 'custom':
@@ -163,6 +172,7 @@ if update_graphs or 'data_loaded' not in st.session_state:
         # Load and process data
         df, calc_json = load_and_process_data(
             start_str, end_str, asset, category_sel, signal_strategy, 
+            use_alt_signal, alt_signal_deviation,
             custom_metrics if category_sel == 'custom' else None
         )
         df_perf, metrics = matrix_strategy.calc_performance(df)
@@ -192,7 +202,7 @@ if update_graphs or 'data_loaded' not in st.session_state:
             col_left, col_right = st.columns([3, 1])
             with col_left:
                 st.subheader("Price & Invested Signal")
-                price_chart_json = graphs.update_price_chart(calc_json, signal_strategy, category_sel, 0,0,0,0,0,0,0,0,0)
+                price_chart_json = graphs.update_price_chart(calc_json, signal_strategy, category_sel, 0,0,0,0,0,0,0,0,0, use_alt_signal=use_alt_signal)
                 st.plotly_chart(pio.from_json(price_chart_json), width='stretch', key="price_chart")
             with col_right:
                 st.subheader("Regime Health")
@@ -219,11 +229,11 @@ if update_graphs or 'data_loaded' not in st.session_state:
 
         with tab2:
             st.subheader("Cumulative Category Scores")
-            cat_chart_json = graphs.update_category_chart(calc_json, signal_strategy, category_sel)
+            cat_chart_json = graphs.update_category_chart(calc_json, signal_strategy, category_sel, use_alt_signal=use_alt_signal)
             st.plotly_chart(pio.from_json(cat_chart_json), width='stretch', key="cat_chart")
 
             st.subheader("Individual Metric Signals")
-            norm_chart_json = graphs.update_norm_chart(calc_json, category_sel, show_raw_data, signal_strategy, custom_metrics if category_sel == 'custom' else None)
+            norm_chart_json = graphs.update_norm_chart(calc_json, category_sel, show_raw_data, signal_strategy, custom_metrics if category_sel == 'custom' else None, use_alt_signal=use_alt_signal)
             st.plotly_chart(pio.from_json(norm_chart_json), width='stretch', key="norm_chart")
 
 st.sidebar.markdown("---")
