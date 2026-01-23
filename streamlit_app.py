@@ -63,6 +63,8 @@ if use_alt_signal:
 else:
     alt_signal_deviation = 5 # default value
 
+allow_short = st.sidebar.checkbox("Allow Shortselling", value=False, help="If checked, strategy will short sell (value -1) instead of going to cash (value 0)")
+
 # Custom metric selector (shown only when custom category is selected)
 custom_metrics = []
 if category_sel == 'custom':
@@ -101,7 +103,7 @@ if st.sidebar.button('Run Backtest Batch'):
       # Convert dates to string format required by backtest logic
       bt_start_str = start_date.strftime('%Y-%m-%d')
       bt_end_str = end_date.strftime('%Y-%m-%d')
-      result_msg = backtest.run_batch_backtest(bt_start_str, bt_end_str, asset, signal_strategy, use_alt_signal, alt_signal_deviation)
+      result_msg = backtest.run_batch_backtest(bt_start_str, bt_end_str, asset, signal_strategy, use_alt_signal, alt_signal_deviation, allow_short)
       st.sidebar.success(result_msg)
 
 if st.sidebar.button("Show Backtest Results"):
@@ -115,7 +117,7 @@ if st.sidebar.button("Clear Backtest History", type="secondary"):
 
 # --- Data Loading ---
 @st.cache_data(ttl=3600)
-def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, use_alt_signal=False, alt_signal_deviation=5, custom_metrics_list=None):
+def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, use_alt_signal=False, alt_signal_deviation=5, custom_metrics_list=None, allow_short=False):
     # This calls the existing matrix_strategy logic
     json_res = matrix_strategy.calc_metric_all(start_str, end_str, "risk_level", asset_name)
     df = pd.read_json(StringIO(json_res), orient='records')
@@ -180,7 +182,15 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, use_
     df['extremes'] = df['peaks'].shift(peak_shift).fillna(0) - df['valleys'].shift(peak_shift).fillna(0)
     df['extremes'] = df['extremes'].replace(0, np.nan)
     df['extremes'] = df['extremes'].ffill(axis = 0)
-    df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
+    df['extremes'] = df['extremes'].replace(0, np.nan)
+    df['extremes'] = df['extremes'].ffill(axis = 0)
+    
+    if allow_short:
+        # If valley (<0) -> Long (1), If Peak (>0) -> Short (-1)
+        df['invested'] = np.where(df['extremes'] < 0, 1, -1)
+    else:
+        # If valley (<0) -> Long (1), If Peak (>0) -> Cash (nan)
+        df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
 
     df.to_csv(f'data/calc_multi_strategy_streamlit.csv') 
     # Update json_res to include the calculated invest_score for all_categories and custom
@@ -203,7 +213,8 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
         df, calc_json, metrics_list = load_and_process_data(
             start_str, end_str, asset, category_sel, signal_strategy, 
             use_alt_signal, alt_signal_deviation,
-            custom_metrics if category_sel == 'custom' else None
+            custom_metrics if category_sel == 'custom' else None,
+            allow_short
         )
         df_perf, metrics = matrix_strategy.calc_performance(df)
         
@@ -232,7 +243,7 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
             col_left, col_right = st.columns([3, 1])
             with col_left:
                 st.subheader("Price & Invested Signal")
-                price_chart_json = graphs.update_price_chart(calc_json, signal_strategy, category_sel, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
+                price_chart_json = graphs.update_price_chart(calc_json, signal_strategy, category_sel, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation, allow_short=allow_short)
                 st.plotly_chart(pio.from_json(price_chart_json), width='stretch', key="price_chart")
             with col_right:
                 st.subheader("Regime Health")
@@ -262,7 +273,7 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
 
             st.subheader("Individual Metric Signals")
 
-            norm_chart_json = graphs.update_norm_chart(calc_json, signal_strategy, category_sel, metrics_list, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
+            norm_chart_json = graphs.update_norm_chart(calc_json, signal_strategy, category_sel, metrics_list, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation, allow_short=allow_short)
             #norm_chart_json = graphs.update_norm_chart(calc_json, category_sel, show_raw_data, signal_strategy, custom_metrics if category_sel == 'custom' else None, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
             st.plotly_chart(pio.from_json(norm_chart_json), width='stretch', key="norm_chart")
 

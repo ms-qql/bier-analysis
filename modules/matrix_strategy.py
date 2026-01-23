@@ -63,9 +63,12 @@ def calc_performance(df):
     df['bh_equity'] = 100 * (df['close'] / df['close'].iloc[0])
     
     # Strategy Equity
-    # We assume we are in BTC when invested == 1, else in cash (flat)
+    # We assume we are in BTC when invested == 1, Short when invested == -1, else in cash (flat)
     df['returns'] = df['close'].pct_change().fillna(0)
-    df['strat_returns'] = np.where(df['invested'].shift(1) == 1, df['returns'], 0)
+    # Handle Long (1) and Short (-1) positions
+    prev_invested = df['invested'].shift(1).fillna(0)
+    df['strat_returns'] = np.where(prev_invested == 1, df['returns'],
+                                   np.where(prev_invested == -1, -df['returns'], 0))
     df['strat_equity'] = 100 * (1 + df['strat_returns']).cumprod()
     
     # Drawdowns
@@ -80,17 +83,17 @@ def calc_performance(df):
     # Strategy metrics
     strat_total_return = (df['strat_equity'].iloc[-1] / 100 - 1)
     strat_ann_return = (1 + strat_total_return) ** (1 / years) - 1 if years > 0 else 0
-    strat_volatility = df['strat_returns'].std() * np.sqrt(252)  # Annualized volatility
+    strat_volatility = df['strat_returns'].std() * np.sqrt(365)  # Annualized volatility
     strat_downside_returns = df['strat_returns'][df['strat_returns'] < 0]
-    strat_downside_dev = strat_downside_returns.std() * np.sqrt(252) if len(strat_downside_returns) > 0 else 0.0001
+    strat_downside_dev = strat_downside_returns.std() * np.sqrt(365) if len(strat_downside_returns) > 0 else 0.0001
     strat_max_dd = abs(df['strat_dd'].min())
     
     # Buy & Hold metrics
     bh_total_return = (df['bh_equity'].iloc[-1] / 100 - 1)
     bh_ann_return = (1 + bh_total_return) ** (1 / years) - 1 if years > 0 else 0
-    bh_volatility = df['returns'].std() * np.sqrt(252)  # Annualized volatility
+    bh_volatility = df['returns'].std() * np.sqrt(365)  # Annualized volatility
     bh_downside_returns = df['returns'][df['returns'] < 0]
-    bh_downside_dev = bh_downside_returns.std() * np.sqrt(252) if len(bh_downside_returns) > 0 else 0.0001
+    bh_downside_dev = bh_downside_returns.std() * np.sqrt(365) if len(bh_downside_returns) > 0 else 0.0001
     bh_max_dd = abs(df['bh_dd'].min())
     
     # Calculate ratios

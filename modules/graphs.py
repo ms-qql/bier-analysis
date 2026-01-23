@@ -43,7 +43,7 @@ norm_lookback = 0 #4 * 360 # use 4 year lookback for normalization (equals to on
 
 
 
-def update_price_chart(calc_json, signal_strategy, category, use_alt_signal=False, alt_signal_deviation=10):  
+def update_price_chart(calc_json, signal_strategy, category, use_alt_signal=False, alt_signal_deviation=10, allow_short=False):  
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition 
      
@@ -52,7 +52,11 @@ def update_price_chart(calc_json, signal_strategy, category, use_alt_signal=Fals
   df['extremes'] = df['peaks'].shift(peak_shift).fillna(0) - df['valleys'].shift(peak_shift).fillna(0)
   df['extremes'] = df['extremes'].replace(0, np.nan)
   df['extremes'] = df['extremes'].ffill(axis = 0)
-  df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
+  
+  if allow_short:
+      df['invested'] = np.where(df['extremes'] < 0, 1, -1)
+  else:
+      df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
 
   print('Price Graph: ', df.tail(3), df.info())
 
@@ -70,12 +74,24 @@ def update_price_chart(calc_json, signal_strategy, category, use_alt_signal=Fals
           line = dict(color='red'),   
           name = 'Price'))
 
+  # Split Long/Short markers
+  long_mask = df['invested'] == 1
+  short_mask = df['invested'] == -1
+  
   fig.add_trace( go.Scatter(  
-          x = x_axis,   
-          y = y_axis_invest_graph, 
+          x = x_axis[long_mask],   
+          y = y_axis_price[long_mask], 
           mode = 'markers',
           marker = dict(color='green'),    
-          name = 'BIER invested'))
+          name = 'BIER Long'))
+
+  if allow_short:
+       fig.add_trace( go.Scatter(  
+          x = x_axis[short_mask],   
+          y = y_axis_price[short_mask], 
+          mode = 'markers',
+          marker = dict(color='darkred'),    
+          name = 'BIER Short'))
   
   if signal_strategy:
         y_axis_range_graph = df['range'] * df['close']
@@ -110,7 +126,7 @@ def update_price_chart(calc_json, signal_strategy, category, use_alt_signal=Fals
 
 
 
-def update_norm_chart(calc_json, signal_strategy, category, metrics_list, use_alt_signal=False, alt_signal_deviation=10):  
+def update_norm_chart(calc_json, signal_strategy, category, metrics_list, use_alt_signal=False, alt_signal_deviation=10, allow_short=False):  
   matrix = matrix_strategy.matrix_strategy()    
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition 
@@ -119,7 +135,11 @@ def update_norm_chart(calc_json, signal_strategy, category, metrics_list, use_al
   df['extremes'] = df['peaks'].shift(peak_shift).fillna(0) - df['valleys'].shift(peak_shift).fillna(0)
   df['extremes'] = df['extremes'].replace(0, np.nan)
   df['extremes'] = df['extremes'].ffill(axis = 0)
-  df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
+  
+  if allow_short:
+      df['invested'] = np.where(df['extremes'] < 0, 1, -1)
+  else:
+      df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
 
   print('Price Graph: ', df.tail(3), df.info())
 
@@ -136,12 +156,24 @@ def update_norm_chart(calc_json, signal_strategy, category, metrics_list, use_al
           line = dict(color='red'),   
           name = 'Price'))
 
+  # Split Long/Short markers
+  long_mask = df['invested'] == 1
+  short_mask = df['invested'] == -1
+
   fig.add_trace( go.Scatter(  
-          x = x_axis,   
-          y = df['invested'] * y_axis_price, 
+          x = x_axis[long_mask],   
+          y = y_axis_price[long_mask], 
           mode = 'markers',
           marker = dict(color='green'),    
-          name = 'BIER invested'))
+          name = 'BIER Long'))
+          
+  if allow_short:
+       fig.add_trace( go.Scatter(  
+          x = x_axis[short_mask],   
+          y = y_axis_price[short_mask], 
+          mode = 'markers',
+          marker = dict(color='darkred'),    
+          name = 'BIER Short'))
 
   # Add Total Score
   fig.add_trace(go.Scatter(          
@@ -199,7 +231,7 @@ def update_norm_chart(calc_json, signal_strategy, category, metrics_list, use_al
 
 
 
-def update_category_chart(calc_json, signal_strategy, category, use_alt_signal=False, alt_signal_deviation=10):  
+def update_category_chart(calc_json, signal_strategy, category, use_alt_signal=False, alt_signal_deviation=10, allow_short=False):  
   matrix = matrix_strategy.matrix_strategy()
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition 
@@ -306,7 +338,11 @@ def update_category_chart(calc_json, signal_strategy, category, use_alt_signal=F
       df_plot['extremes'] = df_plot['peaks'].shift(peak_shift).fillna(0) - df_plot['valleys'].shift(peak_shift).fillna(0)
       df_plot['extremes'] = df_plot['extremes'].replace(0, np.nan)
       df_plot['extremes'] = df_plot['extremes'].ffill(axis ='rows') 
-      df_plot['invested_total'] = np.where((df_plot['extremes'] < 0), 1, np.nan)  
+      
+      if allow_short:
+          df_plot['invested_total'] = np.where(df_plot['extremes'] < 0, 1, -1)
+      else:
+          df_plot['invested_total'] = np.where((df_plot['extremes'] < 0), 1, np.nan)  
 
   fig.add_trace(go.Scatter(            
                 x = df_plot['date'],   
@@ -315,12 +351,24 @@ def update_category_chart(calc_json, signal_strategy, category, use_alt_signal=F
                 line = dict(width=3, color='red'),                  
                 name = 'price'))
 
+  # Split Long/Short markers
+  long_mask = df_plot['invested_total'] == 1
+  short_mask = df_plot['invested_total'] == -1
+
   fig.add_trace( go.Scatter(  
-          x = df_plot['date'],   
-          y = df_plot['invested_total'] * df_plot['close_norm'], 
+          x = df_plot['date'][long_mask],   
+          y = df_plot['close_norm'][long_mask], 
           mode = 'markers',
           marker = dict(color='green'),    
-          name = 'BIER invested'))
+          name = 'BIER Long'))
+          
+  if allow_short:
+       fig.add_trace( go.Scatter(  
+          x = df_plot['date'][short_mask],   
+          y = df_plot['close_norm'][short_mask], 
+          mode = 'markers',
+          marker = dict(color='darkred'),    
+          name = 'BIER Short'))
 
   fig.update_layout(
       title = charttitle_category,
