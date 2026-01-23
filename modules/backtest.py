@@ -42,7 +42,8 @@ class Matrix(TrailingStrategy):
         elif short_signal > 0:
             if self.position.is_long:
                 self.position.close()
-            self.sell(size=self.invest_share, sl=price*(1+self.stop_loss_pct))
+            # switch off short selling
+            #self.sell(size=self.invest_share, sl=price*(1+self.stop_loss_pct))
             pass           
 
 # For plots do NOT use data with datetime as index, as it creates an error
@@ -55,7 +56,7 @@ class Matrix(TrailingStrategy):
 def save_backtest_score(calc_json, asset, use_signal, category, risk_weight, market_weight, mining_weight, macro_weight, sentiment_weight, hodl_weight, shortterm_weight, custom_weight, single_weight, metric):  
   df = pd.read_json(calc_json, orient='records')
   # --------------- signals ------------------------------  
-  peak_shift = 1 # Shift peak by x bars to reflect delayed peak recognition 
+  peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition 
   #scores_list = ['nvts', 'mvrv','reserve_risk','rhodl_ratio','nupl', 'macro_index']
   
   df_categories = database.read_categories() # read once for all categories
@@ -330,7 +331,7 @@ def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_sig
     database.sync_backtest_columns(test_metrics)
     
     # 4. Define Test Run ID
-    test_run_id = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    test_run_id = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     
     # 5. Load base data once for efficiency
     json_res = matrix_strategy.calc_metric_all(start_date, end_date, "risk_level", asset)

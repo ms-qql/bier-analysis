@@ -159,10 +159,9 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, use_
         df['trigger_long'] = df['valleys']
         
     # If custom category and metrics provided, temporarily update the dataframe
-    # If custom category and metrics provided, temporarily update the dataframe
     elif cat_sel == 'custom' and custom_metrics_list:
         # Temporarily modify df_cat for this calculation
-        df_cat['custom'] = df_cat['metric'].isin(custom_metrics_list).astype(int)
+        df_cat['custom'] = df_cat['metric'].isin(custom_metrics_list).astype(int)         
         metrics_list, _ = database.load_category_list(cat_sel, metric='', df=df_cat)
         df = matrix_strategy.calc_multi_strategy(df, 6, metrics_list, use_sig, use_alt_signal, alt_signal_deviation)
     else:
@@ -171,9 +170,9 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, use_
     
     # Force consistent signal logic (Double Hull MA + Peak Detection) to match Price Chart
     # This ensures KPIs, Equity, and Drawdown charts match the visual signals
-    matrix = matrix_strategy.matrix_strategy()
-    df['score_ma'] = matrix.double_hull_ma(df['invest_score'], 5, 5)
-    df = matrix_strategy.calc_peaks_valleys(df, 'score_ma', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)
+    #matrix = matrix_strategy.matrix_strategy()
+    #df['score_ma'] = matrix.double_hull_ma(df['invest_score'], 5, 5)
+    #df = matrix_strategy.calc_peaks_valleys(df, 'score_ma', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)
     
     # Recalculate invested status
     peak_shift = 6
@@ -183,11 +182,12 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, use_
     df['extremes'] = df['extremes'].ffill(axis = 0)
     df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
 
+    df.to_csv(f'data/calc_multi_strategy_streamlit.csv') 
     # Update json_res to include the calculated invest_score for all_categories and custom
-    if cat_sel == 'all_categories' or cat_sel == 'custom':
-        json_res = df.to_json(orient='records')
+    #if cat_sel == 'all_categories' or cat_sel == 'custom':
+    json_res = df.to_json(orient='records')
     
-    return df, json_res
+    return df, json_res, metrics_list
 
 # --- Main Dashboard ---
 st.title("BIER Strategy Dashboard")
@@ -200,7 +200,7 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
         end_str = end_date.strftime('%Y-%m-%d')
         
         # Load and process data
-        df, calc_json = load_and_process_data(
+        df, calc_json, metrics_list = load_and_process_data(
             start_str, end_str, asset, category_sel, signal_strategy, 
             use_alt_signal, alt_signal_deviation,
             custom_metrics if category_sel == 'custom' else None
@@ -232,12 +232,13 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
             col_left, col_right = st.columns([3, 1])
             with col_left:
                 st.subheader("Price & Invested Signal")
-                price_chart_json = graphs.update_price_chart(calc_json, signal_strategy, category_sel, 0,0,0,0,0,0,0,0,0, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
+                price_chart_json = graphs.update_price_chart(calc_json, signal_strategy, category_sel, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
                 st.plotly_chart(pio.from_json(price_chart_json), width='stretch', key="price_chart")
             with col_right:
                 st.subheader("Regime Health")
-                radar_json = graphs.create_radar_chart(calc_json, available_categories, signal_strategy)
-                st.plotly_chart(pio.from_json(radar_json), width='stretch', key="radar_chart")
+                # Temporary disabled
+                #radar_json = graphs.create_radar_chart(calc_json, available_categories, signal_strategy)
+                #st.plotly_chart(pio.from_json(radar_json), width='stretch', key="radar_chart")
 
             # Row 2: Equity & Drawdown side-by-side
             col_eq, col_dd = st.columns(2)
@@ -258,13 +259,18 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                 st.plotly_chart(fig_dd, width='stretch', key="dd_chart")
 
         with tab2:
-            st.subheader("Cumulative Category Scores")
-            cat_chart_json = graphs.update_category_chart(calc_json, signal_strategy, category_sel, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
-            st.plotly_chart(pio.from_json(cat_chart_json), width='stretch', key="cat_chart")
 
             st.subheader("Individual Metric Signals")
-            norm_chart_json = graphs.update_norm_chart(calc_json, category_sel, show_raw_data, signal_strategy, custom_metrics if category_sel == 'custom' else None, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
+
+            norm_chart_json = graphs.update_norm_chart(calc_json, signal_strategy, category_sel, metrics_list, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
+            #norm_chart_json = graphs.update_norm_chart(calc_json, category_sel, show_raw_data, signal_strategy, custom_metrics if category_sel == 'custom' else None, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
             st.plotly_chart(pio.from_json(norm_chart_json), width='stretch', key="norm_chart")
+
+
+            # Temporary disabled
+            #st.subheader("Cumulative Category Scores")
+            #cat_chart_json = graphs.update_category_chart(calc_json, signal_strategy, category_sel, use_alt_signal=use_alt_signal, alt_signal_deviation=alt_signal_deviation)
+            #st.plotly_chart(pio.from_json(cat_chart_json), width='stretch', key="cat_chart")
 
         with tab3:
             st.subheader("Backtest Evaluation")
