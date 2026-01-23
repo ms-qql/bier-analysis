@@ -276,6 +276,21 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                 df_bt_res = database.read_backtest_table()
                 
                 if not df_bt_res.empty:
+                    # Calculate Rankings for each metric
+                    # Higher is better for return, sharpe, sortino, calmar
+                    # Lower absolute value is better for max_dd
+                    df_bt_res['rank_return'] = df_bt_res['return'].rank(ascending=False, method='min')
+                    df_bt_res['rank_sharpe'] = df_bt_res['sharpe'].rank(ascending=False, method='min')
+                    df_bt_res['rank_sortino'] = df_bt_res['sortino'].rank(ascending=False, method='min')
+                    df_bt_res['rank_calmar'] = df_bt_res['calmar'].rank(ascending=False, method='min')
+                    
+                    # For max_dd, rank by absolute value (smaller is better)
+                    df_bt_res['abs_dd'] = df_bt_res['max_dd'].abs()
+                    df_bt_res['rank_max_dd'] = df_bt_res['abs_dd'].rank(ascending=True, method='min')
+                    
+                    # Calculate average rank
+                    df_bt_res['avg_rank'] = df_bt_res[['rank_return', 'rank_sharpe', 'rank_sortino', 'rank_calmar', 'rank_max_dd']].mean(axis=1)
+                    
                     # Summary Stats - Top of page with 5 columns
                     st.subheader("Best Performers")
                     kpi_b1, kpi_b2, kpi_b3, kpi_b4, kpi_b5 = st.columns(5)
@@ -288,7 +303,6 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                     # For max_dd, find smallest absolute value (excluding 0)
                     df_dd_nonzero = df_bt_res[df_bt_res['max_dd'] != 0].copy()
                     if not df_dd_nonzero.empty:
-                        df_dd_nonzero['abs_dd'] = df_dd_nonzero['max_dd'].abs()
                         best_dd = df_dd_nonzero.loc[df_dd_nonzero['abs_dd'].idxmin()]
                     else:
                         best_dd = None
@@ -301,6 +315,61 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                     kpi_b3.metric("Best Sharpe", f"{best_sharpe['sharpe']:.2f}", f"{best_sharpe.get('name', 'Unknown')}")
                     kpi_b4.metric("Best Sortino", f"{best_sortino['sortino']:.2f}", f"{best_sortino.get('name', 'Unknown')}")
                     kpi_b5.metric("Best Calmar", f"{best_calmar['calmar']:.2f}", f"{best_calmar.get('name', 'Unknown')}")
+                    
+                    st.markdown("---")
+                    
+                    # Top 20 by Average Rank Chart
+                    st.subheader("Top 20 Performers by Average Rank")
+                    top_20_rank = df_bt_res.nsmallest(20, 'avg_rank')[['name', 'avg_rank', 'return', 'sharpe', 'sortino', 'calmar', 'max_dd', 
+                                                                         'rank_return', 'rank_sharpe', 'rank_sortino', 'rank_calmar', 'rank_max_dd']].copy()
+                    
+                    # Reverse order so best is at top
+                    top_20_rank = top_20_rank.iloc[::-1]
+                    
+                    fig_rank = go.Figure(go.Bar(
+                        x=top_20_rank['avg_rank'],
+                        y=top_20_rank['name'],
+                        orientation='h',
+                        marker=dict(color='teal'),
+                        text=top_20_rank['avg_rank'].round(1),
+                        textposition='outside',
+                        hovertemplate='<b>%{y}</b><br>' +
+                                      'Avg Rank: %{x:.1f}<br>' +
+                                      'Return: ' + top_20_rank['return'].apply(lambda x: f'{x:.2f}%').values + '<br>' +
+                                      'Sharpe: ' + top_20_rank['sharpe'].apply(lambda x: f'{x:.2f}').values + '<br>' +
+                                      'Sortino: ' + top_20_rank['sortino'].apply(lambda x: f'{x:.2f}').values + '<br>' +
+                                      'Calmar: ' + top_20_rank['calmar'].apply(lambda x: f'{x:.2f}').values + '<br>' +
+                                      'Max DD: ' + top_20_rank['max_dd'].apply(lambda x: f'{x:.2f}%').values +
+                                      '<extra></extra>'
+                    ))
+                    fig_rank.update_layout(
+                        height=600,
+                        xaxis_title="Average Rank (Lower is Better)",
+                        yaxis_title="",
+                        showlegend=False,
+                        margin=dict(l=0, r=50, t=20, b=0)
+                    )
+                    st.plotly_chart(fig_rank, use_container_width=True)
+                    
+                    # Expandable details table with individual rankings
+                    with st.expander("📊 View Individual Rankings per Category"):
+                        # Prepare detailed ranking table (reverse back to show best first)
+                        details_df = top_20_rank.iloc[::-1][['name', 'avg_rank', 'rank_return', 'rank_sharpe', 'rank_sortino', 'rank_calmar', 'rank_max_dd', 
+                                                               'return', 'sharpe', 'sortino', 'calmar', 'max_dd']].copy()
+                        
+                        # Rename columns for better readability
+                        details_df.columns = ['Strategy', 'Avg Rank', 'Return Rank', 'Sharpe Rank', 'Sortino Rank', 'Calmar Rank', 'MaxDD Rank',
+                                             'Return (%)', 'Sharpe', 'Sortino', 'Calmar', 'Max DD (%)']
+                        
+                        # Format numeric columns
+                        details_df['Avg Rank'] = details_df['Avg Rank'].round(1)
+                        details_df['Return (%)'] = details_df['Return (%)'].round(2)
+                        details_df['Sharpe'] = details_df['Sharpe'].round(2)
+                        details_df['Sortino'] = details_df['Sortino'].round(2)
+                        details_df['Calmar'] = details_df['Calmar'].round(2)
+                        details_df['Max DD (%)'] = details_df['Max DD (%)'].round(2)
+                        
+                        st.dataframe(details_df, use_container_width=True, hide_index=True)
                     
                     st.markdown("---")
                     
@@ -328,7 +397,7 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                         active_filters.append(f"Return > {filter_return}%")
                     
                     if filter_max_dd is not None:
-                        df_filtered = df_filtered[df_filtered['max_dd'].abs() < filter_max_dd]
+                        df_filtered = df_filtered[df_filtered['abs_dd'] < filter_max_dd]
                         active_filters.append(f"Max DD < {filter_max_dd}%")
                     
                     if filter_sharpe is not None:
@@ -349,12 +418,14 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                     else:
                         st.info(f"**No filters active** | **Total Results:** {len(df_bt_res)}")
                     
-                    # Define standard columns to show
-                    std_cols = ['id', 'test_run', 'date', 'name', 'start_date', 'end_date', 'signal_strategy', 'return', 'max_dd', 'sharpe', 'sortino', 'calmar']
+                    # Define standard columns to show (including ranking columns)
+                    std_cols = ['id', 'test_run', 'date', 'name', 'start_date', 'end_date', 'signal_strategy', 
+                                'return', 'max_dd', 'sharpe', 'sortino', 'calmar', 
+                                'rank_return', 'rank_sharpe', 'rank_sortino', 'rank_calmar', 'rank_max_dd', 'avg_rank']
                     
                     # Filter to only show standard columns (hide metric columns)
                     display_cols = [c for c in std_cols if c in df_filtered.columns]
-                    df_display = df_filtered[display_cols]
+                    df_display = df_filtered[display_cols].sort_values('avg_rank')
                     
                     st.dataframe(df_display, use_container_width=True)
                     
@@ -444,7 +515,6 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                         # Filter out 0 values and get smallest absolute drawdowns
                         df_dd_filtered = df_bt_res[df_bt_res['max_dd'] != 0].copy()
                         if not df_dd_filtered.empty:
-                            df_dd_filtered['abs_dd'] = df_dd_filtered['max_dd'].abs()
                             top_dd = df_dd_filtered.nsmallest(10, 'abs_dd')[['name', 'max_dd', 'abs_dd']]
                             fig_dd = go.Figure(go.Bar(
                                 x=top_dd['abs_dd'],

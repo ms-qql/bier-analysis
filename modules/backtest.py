@@ -303,7 +303,7 @@ def get_backtest_stats_dict(df_bt):
         }
 
 @anvil.server.callable
-def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_signal, alt_signal_deviation, max_combination_size=2):
+def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_signal, alt_signal_deviation, max_combination_size=3):
     """
     Batch backtest for all metrics with 'test=1' in database.
     After individual tests, tests combinations of profitable metrics (up to max_combination_size).
