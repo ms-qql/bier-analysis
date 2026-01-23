@@ -334,7 +334,7 @@ def get_backtest_stats_dict(df_bt, allow_short=False):
         }
 
 @anvil.server.callable
-def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_signal, alt_signal_deviation, allow_short=False, max_combination_size=2):
+def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_signal, alt_signal_deviation, allow_short=False, max_combination_size=1):
     """
     Batch backtest for all metrics with 'test=1' in database.
     After individual tests, tests combinations of profitable metrics (up to max_combination_size).
@@ -405,6 +405,7 @@ def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_sig
                 'start_date': start_date,
                 'end_date': end_date,
                 'signal_strategy': str(signal_strategy),
+                'short_sell': allow_short,
                 'nb_metrics': len(metrics_list),
                 'return': stats['return'],
                 'max_dd': abs(stats['max_dd']),
@@ -482,6 +483,7 @@ def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_sig
                         'start_date': start_date,
                         'end_date': end_date,
                         'signal_strategy': str(signal_strategy),
+                        'short_sell': allow_short,
                         'nb_metrics': len(metrics_list),
                         'return': stats['return'],
                         'max_dd': abs(stats['max_dd']),

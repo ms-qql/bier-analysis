@@ -389,7 +389,7 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                     
                     # Filter Controls
                     st.subheader("Filter Results")
-                    filter_col1, filter_col2, filter_col3, filter_col4, filter_col5, filter_col6 = st.columns(6)
+                    filter_col1, filter_col2, filter_col3, filter_col4, filter_col5, filter_col6, filter_col7 = st.columns(7)
                     
                     with filter_col1:
                         filter_nb_metrics = st.number_input("# Metrics =", value=None, step=1, min_value=1, help="Show only results with this exact number of metrics")
@@ -403,6 +403,8 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                         filter_sortino = st.number_input("Sortino >", value=None, step=0.1, format="%.2f", help="Show only results with Sortino ratio greater than this value")
                     with filter_col6:
                         filter_calmar = st.number_input("Calmar >", value=None, step=0.1, format="%.2f", help="Show only results with Calmar ratio greater than this value")
+                    with filter_col7:
+                        filter_short = st.selectbox("Short Selling", ["All", "Enabled", "Disabled"], index=0, help="Filter by Short Selling flag")
                     
                     # Apply filters
                     df_filtered = df_bt_res.copy()
@@ -431,6 +433,17 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                     if filter_calmar is not None:
                         df_filtered = df_filtered[df_filtered['calmar'] > filter_calmar]
                         active_filters.append(f"Calmar > {filter_calmar}")
+
+                    if filter_short != "All":
+                        if 'short_sell' in df_filtered.columns:
+                            # Handle potential NaN or diverse types safely
+                            df_filtered['short_sell'] = df_filtered['short_sell'].fillna(False)
+                            if filter_short == "Enabled":
+                                df_filtered = df_filtered[df_filtered['short_sell'] == True]
+                                active_filters.append("Short Selling: Enabled")
+                            else: # Disabled
+                                df_filtered = df_filtered[df_filtered['short_sell'] == False] 
+                                active_filters.append("Short Selling: Disabled")
                     
                     # Show active filters and result count
                     if active_filters:
@@ -439,7 +452,7 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                         st.info(f"**No filters active** | **Total Results:** {len(df_bt_res)}")
                     
                     # Define standard columns to show (including ranking columns and nb_metrics)
-                    std_cols = ['id', 'test_run', 'date', 'name', 'start_date', 'end_date', 'signal_strategy', 'nb_metrics',
+                    std_cols = ['id', 'test_run', 'date', 'name', 'start_date', 'end_date', 'signal_strategy', 'nb_metrics', 'short_sell',
                                 'return', 'max_dd', 'sharpe', 'sortino', 'calmar', 
                                 'rank_return', 'rank_sharpe', 'rank_sortino', 'rank_calmar', 'rank_max_dd', 'avg_rank']
                     

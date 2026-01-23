@@ -787,6 +787,11 @@ def sync_backtest_columns(metrics_list):
             if 'nb_metrics' not in existing_columns:
                 print("Adding column nb_metrics to bier_backtest")
                 cursor.execute("ALTER TABLE bier_backtest ADD COLUMN nb_metrics INTEGER DEFAULT 1;")
+                
+            # Ensure short_sell column exists (migration)
+            if 'short_sell' not in existing_columns:
+                print("Adding column short_sell to bier_backtest")
+                cursor.execute("ALTER TABLE bier_backtest ADD COLUMN short_sell BOOLEAN DEFAULT FALSE;")
 
 def save_backtest_row(data_dict):
     """
