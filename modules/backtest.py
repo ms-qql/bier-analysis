@@ -374,8 +374,9 @@ def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_sig
                 'start_date': start_date,
                 'end_date': end_date,
                 'signal_strategy': str(signal_strategy),
+                'nb_metrics': len(metrics_list),
                 'return': stats['return'],
-                'max_dd': stats['max_dd'],
+                'max_dd': abs(stats['max_dd']),
                 'sharpe': stats['sharpe'],
                 'sortino': stats['sortino'],
                 'calmar': stats['calmar']
@@ -450,8 +451,9 @@ def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_sig
                         'start_date': start_date,
                         'end_date': end_date,
                         'signal_strategy': str(signal_strategy),
+                        'nb_metrics': len(metrics_list),
                         'return': stats['return'],
-                        'max_dd': stats['max_dd'],
+                        'max_dd': abs(stats['max_dd']),
                         'sharpe': stats['sharpe'],
                         'sortino': stats['sortino'],
                         'calmar': stats['calmar']

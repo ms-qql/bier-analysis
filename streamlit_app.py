@@ -278,15 +278,12 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                 if not df_bt_res.empty:
                     # Calculate Rankings for each metric
                     # Higher is better for return, sharpe, sortino, calmar
-                    # Lower absolute value is better for max_dd
+                    # Lower is better for max_dd (now stored as absolute value)
                     df_bt_res['rank_return'] = df_bt_res['return'].rank(ascending=False, method='min')
                     df_bt_res['rank_sharpe'] = df_bt_res['sharpe'].rank(ascending=False, method='min')
                     df_bt_res['rank_sortino'] = df_bt_res['sortino'].rank(ascending=False, method='min')
                     df_bt_res['rank_calmar'] = df_bt_res['calmar'].rank(ascending=False, method='min')
-                    
-                    # For max_dd, rank by absolute value (smaller is better)
-                    df_bt_res['abs_dd'] = df_bt_res['max_dd'].abs()
-                    df_bt_res['rank_max_dd'] = df_bt_res['abs_dd'].rank(ascending=True, method='min')
+                    df_bt_res['rank_max_dd'] = df_bt_res['max_dd'].rank(ascending=True, method='min')
                     
                     # Calculate average rank
                     df_bt_res['avg_rank'] = df_bt_res[['rank_return', 'rank_sharpe', 'rank_sortino', 'rank_calmar', 'rank_max_dd']].mean(axis=1)
@@ -300,10 +297,10 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                     best_sortino = df_bt_res.loc[df_bt_res['sortino'].idxmax()]
                     best_calmar = df_bt_res.loc[df_bt_res['calmar'].idxmax()]
                     
-                    # For max_dd, find smallest absolute value (excluding 0)
+                    # For max_dd, find smallest value (now stored as absolute)
                     df_dd_nonzero = df_bt_res[df_bt_res['max_dd'] != 0].copy()
                     if not df_dd_nonzero.empty:
-                        best_dd = df_dd_nonzero.loc[df_dd_nonzero['abs_dd'].idxmin()]
+                        best_dd = df_dd_nonzero.loc[df_dd_nonzero['max_dd'].idxmin()]
                     else:
                         best_dd = None
                     
@@ -375,29 +372,35 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                     
                     # Filter Controls
                     st.subheader("Filter Results")
-                    filter_col1, filter_col2, filter_col3, filter_col4, filter_col5 = st.columns(5)
+                    filter_col1, filter_col2, filter_col3, filter_col4, filter_col5, filter_col6 = st.columns(6)
                     
                     with filter_col1:
-                        filter_return = st.number_input("Return > (%)", value=None, step=1.0, format="%.1f", help="Show only results with return greater than this value")
+                        filter_nb_metrics = st.number_input("# Metrics =", value=None, step=1, min_value=1, help="Show only results with this exact number of metrics")
                     with filter_col2:
-                        filter_max_dd = st.number_input("Max DD < (abs %)", value=None, step=1.0, format="%.1f", help="Show only results with absolute max drawdown less than this value")
+                        filter_return = st.number_input("Return > (%)", value=None, step=1.0, format="%.1f", help="Show only results with return greater than this value")
                     with filter_col3:
-                        filter_sharpe = st.number_input("Sharpe >", value=None, step=0.1, format="%.2f", help="Show only results with Sharpe ratio greater than this value")
+                        filter_max_dd = st.number_input("Max DD < (%)", value=None, step=1.0, format="%.1f", help="Show only results with max drawdown less than this value")
                     with filter_col4:
-                        filter_sortino = st.number_input("Sortino >", value=None, step=0.1, format="%.2f", help="Show only results with Sortino ratio greater than this value")
+                        filter_sharpe = st.number_input("Sharpe >", value=None, step=0.1, format="%.2f", help="Show only results with Sharpe ratio greater than this value")
                     with filter_col5:
+                        filter_sortino = st.number_input("Sortino >", value=None, step=0.1, format="%.2f", help="Show only results with Sortino ratio greater than this value")
+                    with filter_col6:
                         filter_calmar = st.number_input("Calmar >", value=None, step=0.1, format="%.2f", help="Show only results with Calmar ratio greater than this value")
                     
                     # Apply filters
                     df_filtered = df_bt_res.copy()
                     active_filters = []
                     
+                    if filter_nb_metrics is not None:
+                        df_filtered = df_filtered[df_filtered['nb_metrics'] == filter_nb_metrics]
+                        active_filters.append(f"# Metrics = {filter_nb_metrics}")
+                    
                     if filter_return is not None:
                         df_filtered = df_filtered[df_filtered['return'] > filter_return]
                         active_filters.append(f"Return > {filter_return}%")
                     
                     if filter_max_dd is not None:
-                        df_filtered = df_filtered[df_filtered['abs_dd'] < filter_max_dd]
+                        df_filtered = df_filtered[df_filtered['max_dd'] < filter_max_dd]
                         active_filters.append(f"Max DD < {filter_max_dd}%")
                     
                     if filter_sharpe is not None:
@@ -418,8 +421,8 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                     else:
                         st.info(f"**No filters active** | **Total Results:** {len(df_bt_res)}")
                     
-                    # Define standard columns to show (including ranking columns)
-                    std_cols = ['id', 'test_run', 'date', 'name', 'start_date', 'end_date', 'signal_strategy', 
+                    # Define standard columns to show (including ranking columns and nb_metrics)
+                    std_cols = ['id', 'test_run', 'date', 'name', 'start_date', 'end_date', 'signal_strategy', 'nb_metrics',
                                 'return', 'max_dd', 'sharpe', 'sortino', 'calmar', 
                                 'rank_return', 'rank_sharpe', 'rank_sortino', 'rank_calmar', 'rank_max_dd', 'avg_rank']
                     
@@ -512,19 +515,19 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                     
                     with chart_col5:
                         st.markdown("**Top 10 by Max Drawdown (Smallest)**")
-                        # Filter out 0 values and get smallest absolute drawdowns
+                        # Filter out 0 values and get smallest drawdowns (now stored as absolute)
                         df_dd_filtered = df_bt_res[df_bt_res['max_dd'] != 0].copy()
                         if not df_dd_filtered.empty:
-                            top_dd = df_dd_filtered.nsmallest(10, 'abs_dd')[['name', 'max_dd', 'abs_dd']]
+                            top_dd = df_dd_filtered.nsmallest(10, 'max_dd')[['name', 'max_dd']]
                             fig_dd = go.Figure(go.Bar(
-                                x=top_dd['abs_dd'],
+                                x=top_dd['max_dd'],
                                 y=top_dd['name'],
                                 orientation='h',
                                 marker=dict(color='red')
                             ))
                             fig_dd.update_layout(
                                 height=400,
-                                xaxis_title="Max Drawdown (%) - Absolute Value",
+                                xaxis_title="Max Drawdown (%)",
                                 yaxis_title="",
                                 showlegend=False,
                                 margin=dict(l=0, r=0, t=20, b=0)

@@ -154,6 +154,7 @@ CREATE_BIER_BACKTEST_TABLE = """CREATE TABLE IF NOT EXISTS bier_backtest (
     start_date TEXT,
     end_date TEXT,
     signal_strategy TEXT,
+    nb_metrics INTEGER,
     return REAL,
     max_dd REAL,
     sharpe REAL,
@@ -783,6 +784,11 @@ def sync_backtest_columns(metrics_list):
                 if col_name not in existing_columns:
                     print(f"Adding column {col_name} to bier_backtest")
                     cursor.execute(f"ALTER TABLE bier_backtest ADD COLUMN {col_name} REAL DEFAULT 0;")
+            
+            # Ensure nb_metrics column exists (migration)
+            if 'nb_metrics' not in existing_columns:
+                print("Adding column nb_metrics to bier_backtest")
+                cursor.execute("ALTER TABLE bier_backtest ADD COLUMN nb_metrics INTEGER DEFAULT 1;")
 
 def save_backtest_row(data_dict):
     """
