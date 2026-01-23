@@ -727,8 +727,8 @@ def create_bier_category_weight_table():
 
 
 def read_bier_categories():
-    with connection:
-        with connection.cursor() as cursor:
+    with psycopg2.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cursor:
             cursor.execute(SELECT_ALL_ROWS_BIER_CATEGORIES_TABLE)
             tuples = cursor.fetchall()
             list_dicts = []
@@ -747,8 +747,6 @@ def read_bier_category_weight():
                 list_dicts.append(dict(zip(dict_keys_bier_category_weight, t)))
             return list_dicts
 
-
-# ----------------------------- Backtest Table Functions --------------------------------------------------
 
 # ----------------------------- Backtest Table Functions --------------------------------------------------
 
@@ -1046,6 +1044,7 @@ def load_category_list(category: str, metric='', df=None) -> list:
         df_true = df[df[category] == True]
         category_list = df_true['metric'].tolist()    
         category_norm_list = [f"{metric}_norm" for metric in category_list]  
+        print('category_list', category_list)
 
     return category_list, category_norm_list
 

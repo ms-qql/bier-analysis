@@ -32,10 +32,8 @@ from . import matrix_strategy
 
 # chart titles
 charttitle_price = 'Metrics & Price (USD)' 
-charttitle_strategy = 'Strategy Score'
 charttitle_category = 'Categories Score'
 charttitle_norm = 'Norm / Raw Data'
-charttitle_signals = 'Signals'
 
 # ------ Support Functions ---------------------------------------------------------------------------------------
 
@@ -45,27 +43,11 @@ norm_lookback = 0 #4 * 360 # use 4 year lookback for normalization (equals to on
 
 
 
-def update_price_chart(calc_json, signal_strategy, category, risk_weight, market_weight, mining_weight, macro_weight, sentiment_weight, hodl_weight, shortterm_weight, custom_weight, single_weight, use_alt_signal=False, alt_signal_deviation=10):  
+def update_price_chart(calc_json, signal_strategy, category, use_alt_signal=False, alt_signal_deviation=10):  
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition 
-  
-  df_categories = database.read_categories() # read once for all categories
-  
-  # Handle all_categories or custom: use the invest_score that was already calculated
-  if category == 'all_categories' or (category == 'custom' and 'invest_score' in df.columns):
-      # The invest_score is already calculated in load_and_process_data
-      # We just need to use it directly
-      y_axis_invested = df['invest_score']
-  else:
-      metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
-      df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy, use_alt_signal, alt_signal_deviation)
-      y_axis_invested = df['invest_score']       
-  
-  matrix = matrix_strategy.matrix_strategy()
-  # Re-calculate invested signal using Norm Chart logic (Double Smoothing + Standard Peaks) to ensure consistency
-  # This overrides the default or alternative signal from calc_multi_strategy to match the "Deep Dive" visualization
-  df['score_ma'] = matrix.double_hull_ma(df['invest_score'], 5, 5)
-  df = matrix_strategy.calc_peaks_valleys(df, 'score_ma', peak_min = 50, vert_dist = 0, peak_dist = 2, peak_width = 0, peak_prominence = 10, filt_double_extremes = False)
+     
+
   df = df.copy()
   df['extremes'] = df['peaks'].shift(peak_shift).fillna(0) - df['valleys'].shift(peak_shift).fillna(0)
   df['extremes'] = df['extremes'].replace(0, np.nan)
@@ -78,6 +60,7 @@ def update_price_chart(calc_json, signal_strategy, category, risk_weight, market
   
   x_axis = df['date']
   y_axis_price = df['close']
+  y_axis_invested = df['invest_score']    
   y_axis_invest_graph = df['invested'] * df['close']
 
   fig = go.Figure(go.Scatter(
@@ -118,11 +101,100 @@ def update_price_chart(calc_json, signal_strategy, category, risk_weight, market
       yaxis=dict(title='Price', type='log'),
       yaxis2=dict(title='Score', overlaying='y', side='right', type='linear'),    
       legend={'orientation':'h'},
+      margin=dict(l=0, r=0),
       paper_bgcolor= 'rgba(0,0,0,0)', # Transparent
       plot_bgcolor= 'rgba(0,0,0,0)') # Transparent
   fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='silver',zeroline=True, zerolinewidth=2, zerolinecolor='silver')
 
   return fig.to_json() 
+
+
+
+def update_norm_chart(calc_json, signal_strategy, category, metrics_list, use_alt_signal=False, alt_signal_deviation=10):  
+  matrix = matrix_strategy.matrix_strategy()    
+  df = pd.read_json(StringIO(calc_json), orient='records') 
+  peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition 
+  
+  df = df.copy()
+  df['extremes'] = df['peaks'].shift(peak_shift).fillna(0) - df['valleys'].shift(peak_shift).fillna(0)
+  df['extremes'] = df['extremes'].replace(0, np.nan)
+  df['extremes'] = df['extremes'].ffill(axis = 0)
+  df['invested'] = np.where((df['extremes'] < 0), 1, np.nan)
+
+  print('Price Graph: ', df.tail(3), df.info())
+
+  df = df.iloc[norm_lookback:-1] # use only data after lookback period & without last incomplete bar
+  
+  x_axis = df['date']
+  y_axis_price = matrix.calc_norm(df['close']) #if not raw_data else df['close']
+
+  # Plot price line with investment markers
+  fig = go.Figure(go.Scatter(
+          x = x_axis, 
+          y = y_axis_price,
+          mode = 'lines',
+          line = dict(color='red'),   
+          name = 'Price'))
+
+  fig.add_trace( go.Scatter(  
+          x = x_axis,   
+          y = df['invested'] * y_axis_price, 
+          mode = 'markers',
+          marker = dict(color='green'),    
+          name = 'BIER invested'))
+
+  # Add Total Score
+  fig.add_trace(go.Scatter(          
+                x=x_axis,   
+                y=df['invest_score'], 
+                mode='lines',
+                line=dict(width=3, color='blue'),
+                name='Total Score'))
+
+  # Add Peaks Markers (Sell/High checks) on Total Score
+  # Peaks in alternative signal logic = Divest signal
+  if 'peaks' in df.columns:
+      peaks_y = df.apply(lambda row: row['invest_score'] if row['peaks'] == 1 else None, axis=1)
+      fig.add_trace(go.Scatter(
+          x=x_axis,
+          y=peaks_y,
+          mode='markers',
+          marker=dict(symbol='triangle-down', size=10, color='orange'),
+          name='Peak (Divest)'
+      ))
+
+  # Add Valleys Markers (Buy/Low checks) on Total Score
+  # Valleys in alternative signal logic = Invest signal
+  if 'valleys' in df.columns:
+      valleys_y = df.apply(lambda row: row['invest_score'] if row['valleys'] == 1 else None, axis=1)
+      fig.add_trace(go.Scatter(
+          x=x_axis,
+          y=valleys_y,
+          mode='markers',
+          marker=dict(symbol='triangle-up', size=10, color='lime'),
+          name='Valley (Invest)'
+      ))
+
+  # Add individual metrics
+  for metric in metrics_list:                 
+        #print(f'Metric for {metric} Graph: /n', df[metric])
+        fig.add_trace(go.Scatter(
+                x = x_axis, 
+                y = matrix.calc_norm(df[metric]),
+                mode = 'lines',
+                name = metric))
+
+
+  fig.update_layout(
+    title = charttitle_norm, 
+    legend={'orientation':'h'},
+    margin=dict(l=0, r=0),
+    paper_bgcolor= 'rgba(0,0,0,0)', # Transparent
+    plot_bgcolor= 'rgba(0,0,0,0)') # specify layout
+  fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='silver',zeroline=True, zerolinewidth=2, zerolinecolor='silver')
+
+  return fig.to_json() 
+
 
 
 
@@ -253,7 +325,8 @@ def update_category_chart(calc_json, signal_strategy, category, use_alt_signal=F
   fig.update_layout(
       title = charttitle_category,
       xaxis=dict(range=[df_plot['date'].min(), df_plot['date'].max()]),  # Stretch to full data range
-      yaxis=dict(title='Categories'), 
+      yaxis=dict(title='Categories'),
+      margin=dict(l=0, r=0), 
       legend={'orientation':'h'},
       paper_bgcolor= 'rgba(0,0,0,0)', # Transparent
       plot_bgcolor= 'rgba(0,0,0,0)') # Transparent
@@ -264,221 +337,7 @@ def update_category_chart(calc_json, signal_strategy, category, use_alt_signal=F
 
 
 
-def update_strategy_chart(calc_json, signal_strategy, risk_weight, market_weight, mining_weight, macro_weight, sentiment_weight, hodl_weight, shortterm_weight, custom_weight, single_weight, category):  
-  df = pd.read_json(StringIO(calc_json), orient='records') 
-  peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition 
-
-  #df = matrix_strategy.calc_strategy(df, peak_shift, risk_weight, market_weight, mining_weight, macro_weight, sentiment_weight, hodl_weight, shortterm_weight, custom_weight, single_weight)
-
-  df_categories = database.read_categories() # read once for all categories
-  
-  # Handle all_categories: use the invest_score that was already calculated
-  if category != 'all_categories':
-      metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
-      #print("Metrics Strategy: ", metrics_list_norm)     
-      df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list, signal_strategy)
-
-  # Create forecast column
-  df = matrix_strategy.create_forecast(df, score_column='invest_score')
-  df = df.iloc[norm_lookback:-1] # use only data after lookback period & without last incomplete bar
-  
-  x_axis = df['date']
-
-  fig = go.Figure(go.Scatter(
-          x = x_axis, 
-          y = df['close_norm'],
-          line = dict(color='red'),      
-          mode = 'lines',
-          name = 'Price'))
-
-  fig.add_trace( go.Scatter(  
-          x = x_axis,   
-          y = df['invested_ds'] * df['close_norm'], 
-          mode = 'markers',
-          marker = dict(color='green'),    
-          name = 'BIER invested (Dual Strategy)'))
-  
-  fig.add_trace(go.Scatter(
-          x = x_axis, 
-          y = df['invest_score'],
-          mode = 'lines',
-          line = dict(color='black'),   
-          name = 'Strategy Score'))   
-  
-  fig.add_trace(go.Scatter(
-          x = x_axis, 
-          y = df['forecast'] * 5,
-          mode = 'lines',
-          line = dict(color='blue'),   
-          name = 'Forecast'))       
-    
-  if not signal_strategy:
-
-        fig.add_trace(go.Scatter(
-                x = x_axis, 
-                y = df['peaks'] * df['invest_score'],
-                mode = 'markers',
-                marker=dict(size=8, color='orange',symbol='cross'),    
-                name = 'Peaks'))
-  
-        fig.add_trace(go.Scatter(
-                x = x_axis, 
-                y = df['valleys'] * df['invest_score'],
-                mode = 'markers',
-                marker=dict(size=8, color='blue',symbol='cross'),    
-                name = 'Valleys'))
-
-  
-  fig.update_layout(
-      title = charttitle_strategy,
-      #yaxis=dict(title='Price'),
-      #yaxis2=dict(title=metric, overlaying='y', side='right'),    
-      legend={'orientation':'h'},
-      paper_bgcolor= 'rgba(0,0,0,0)', # Transparent
-      plot_bgcolor= 'rgba(0,0,0,0)') # Transparent
-  fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='silver',zeroline=True, zerolinewidth=2, zerolinecolor='silver')
-
-  return fig.to_json() 
-
-'''
-# @anvil.server.callable
-def update_category_chart(calc_json, category, signal_strategy=True):  
-  df = pd.read_json(StringIO(calc_json), orient='records') 
-  peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition  
-
-  df_categories = database.read_categories() # read once for all categories
-  metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
-  #print("Metrics Strategy: ", metrics_list_norm) 
-
-  matrix = matrix_strategy.matrix_strategy()
-  
-  #df = matrix_strategy.calc_multi_strategy(df, peak_shift, metrics_list)
-
-
-  """for metric in metrics_list:
-    norm_name = metric + '_norm'
-
-    # Funding is already 0...100, hence no normalization needed
-    if 'funding' in metric:
-      df[norm_name] = df[metric]
-    else:
-      df[norm_name] = matrix.calc_norm(df[metric])
-
-  print('Category Chart: ', df.tail().to_string(), df.columns)"""
-
-  x_axis = df['date']
-  y_axis_price = matrix.calc_norm(df['close'])  
-
-  fig = go.Figure(go.Scatter(
-          x = x_axis, 
-          y = y_axis_price,
-          mode = 'lines',
-          name = 'Price'))
-  
-  for metric in metrics_list:
-        single_metric_list = [metric]
-        df = matrix_strategy.calc_multi_strategy(df, peak_shift, single_metric_list, signal_strategy)      
-
-        fig.add_trace( go.Scatter(  
-                x = x_axis,   
-                y = df['invest_score'], 
-                mode = 'lines',  
-                name = metric))
-        
-
-  """for metric in metrics_list:
-    norm_name = metric + '_norm'    
-    fig.add_trace(go.Scatter(
-            x = x_axis, 
-            y = df[norm_name],
-            mode = 'lines',
-            name = metric))
-
-    try:
-      invest_name = metric + '_invested'
-      fig.add_trace(go.Scatter(
-              x = x_axis,
-              y = df[invest_name],
-              mode = 'lines',
-              name = invest_name))
-    except:
-      pass"""
-    
-
-  fig.update_layout(
-      title = charttitle_norm, 
-      legend={'orientation':'h'},
-      paper_bgcolor= 'white', #Aussenrand,
-      plot_bgcolor= 'white') #'#363636') # specify layout
-  fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='silver',zeroline=True, zerolinewidth=2, zerolinecolor='silver')
-
-  return fig.to_json() '''
-
-
-
-
-def update_signal_chart(calc_json, signal_strategy, category, custom_metrics=None, show_raw_data=False):  
-  df = pd.read_json(StringIO(calc_json), orient='records') 
-  peak_shift = 6 # Shift peak by x bars to reflect delayed peak recognition  
-
-  df_categories = database.read_categories() # read once for all categories
-  
-  # Handle all_categories: skip individual metric plotting
-  if category == 'all_categories':
-      print("Metrics Signal: all_categories (weighted combination)")
-      metrics_list = []  # Empty list, will just show the combined score
-  elif category == 'custom' and custom_metrics:
-      # Use the selected custom metrics from UI
-      print("Metrics Signal (custom selected): ", custom_metrics)
-      metrics_list = custom_metrics
-  else:
-      metrics_list, metrics_list_norm = database.load_category_list(category, metric='', df=df_categories) 
-      print("Metrics Signal: ", metrics_list)  
-
-  matrix = matrix_strategy.matrix_strategy()
-  df['close_norm'] = matrix.calc_norm(df['close']) 
-  #df = df.loc[norm_lookback:]   
-
-  x_axis = df['date']
-  y_axis_price = df['close_norm'] #matrix.calc_norm(df['close']) 
-
-  fig = go.Figure(go.Scatter(
-          x = x_axis, 
-          y = y_axis_price,
-          mode = 'lines',
-          name = 'Price'))
-  
-  for metric in metrics_list:
-        single_metric_list = [metric]
-        df_metric = matrix_strategy.calc_multi_strategy(df.copy(), peak_shift, single_metric_list, signal_strategy)  
-        
-        # Use raw metric values if show_raw_data is enabled, otherwise use invest_score
-        if show_raw_data:
-            # Show the original metric values
-            signal_graph = df_metric[metric] if metric in df_metric.columns else df_metric['invest_score']
-        else:
-            # Show the normalized invest_score (0-100)
-            signal_graph = df_metric['invest_score']
-
-        fig.add_trace( go.Scatter(  
-                x = x_axis,   
-                y = signal_graph, 
-                mode = 'lines',  
-                name = metric))
-           
-  fig.update_layout(
-      title = charttitle_signals, 
-      legend={'orientation':'h'},
-      paper_bgcolor= 'rgba(0,0,0,0)', # Transparent
-      plot_bgcolor= 'rgba(0,0,0,0)') # Transparent
-  fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='silver',zeroline=True, zerolinewidth=2, zerolinecolor='silver')
-
-  return fig.to_json() 
-
-
-
-
-def update_norm_chart(calc_json, category, raw_data, signal_strategy, custom_metrics=None, use_alt_signal=False, alt_signal_deviation=10):  
+'''def update_norm_chart(calc_json, category, raw_data, signal_strategy, custom_metrics=None, use_alt_signal=False, alt_signal_deviation=10):  
   df = pd.read_json(StringIO(calc_json), orient='records') 
   peak_shift = 6
   #print('Norm Graph DF: ', df, df.columns)
@@ -606,7 +465,7 @@ def update_norm_chart(calc_json, category, raw_data, signal_strategy, custom_met
     plot_bgcolor= 'rgba(0,0,0,0)') # specify layout
   fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='silver',zeroline=True, zerolinewidth=2, zerolinecolor='silver')
 
-  return fig.to_json() 
+  return fig.to_json() '''
 
 def create_radar_chart(calc_json, categories, signal_strategy):
     """Create a radar chart of current category scores"""
