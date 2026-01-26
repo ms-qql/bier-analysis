@@ -14,6 +14,7 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
 from boruta import BorutaPy
+from statsmodels.tsa.stattools import acf, pacf
 from sklearn.ensemble import RandomForestRegressor
 from boruta import BorutaPy
 
@@ -460,4 +461,49 @@ def analyze_boruta_stability(df, target_col='close', lookahead=7):
     if not stability_data:
         return pd.DataFrame(columns=['Feature', 'Stability_Score', 'Status', 'Windows_Count']), 0
             
+    if not stability_data:
+        return pd.DataFrame(columns=['Feature', 'Stability_Score', 'Status', 'Windows_Count']), 0
+            
     return pd.DataFrame(stability_data).sort_values('Stability_Score', ascending=False), total_windows_attempted
+
+def analyze_acf_pacf(series, lags_acf=100, lags_pacf=30, alpha=0.05):
+    """
+    Stage 5: Lag Selection (ACF/PACF).
+    Calculates AutoCorrelation and Partial AutoCorrelation.
+    alpha: Significance level (default 0.05 for 95% confidence).
+    """
+    # ensure clean series
+    series = series.dropna()
+    n = len(series)
+    
+    # Calculate ACF/PACF
+    # alpha returns confint
+    acf_vals, acf_confint = acf(series, nlags=lags_acf, alpha=alpha)
+    pacf_vals, pacf_confint = pacf(series, nlags=lags_pacf, alpha=alpha)
+    
+    # Significance Threshold based on Z-score for alpha
+    # Statsmodels returns the confint directly, let's use that for plotting bounds if needed,
+    # but the simple approximation +/- z / sqrt(n) is easier for the fixed shade.
+    # For alpha=0.05, z=1.96.
+    import scipy.stats as stats
+    z_score = stats.norm.ppf(1 - alpha/2)
+    sig_thresh = z_score / np.sqrt(n)
+    
+    # Prepare DataFrames
+    # Lag 0 is always 1.0, usually ignored for checking lags
+    
+    acf_df = pd.DataFrame({
+        'Lag': range(len(acf_vals)),
+        'ACF': acf_vals,
+        'Lower_CI': acf_confint[:, 0] - acf_vals, # intervals are centered around acf? No, returned as (lower, upper) absolute values
+        'Upper_CI': acf_confint[:, 1] - acf_vals,
+        'Significant': np.abs(acf_vals) > sig_thresh
+    }).iloc[1:] # Drop lag 0
+    
+    pacf_df = pd.DataFrame({
+        'Lag': range(len(pacf_vals)),
+        'PACF': pacf_vals,
+        'Significant': np.abs(pacf_vals) > sig_thresh
+    }).iloc[1:] # Drop lag 0
+    
+    return acf_df, pacf_df, sig_thresh

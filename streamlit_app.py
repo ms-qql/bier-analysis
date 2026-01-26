@@ -392,14 +392,107 @@ if app_mode == "Feature Analysis":
                                  lambda x: 'background-color: #90ee90' if x == 'Robust' else ('background-color: #ffe4b5' if x == 'Regime-Sensitive' else 'background-color: #ffcccb'),
                                  subset=['Status']
                              ), use_container_width=True)
-                             
-                             # Download
-                             st.download_button(
-                                label="Download Boruta Stability Report (CSV)",
-                                data=stability_df.to_csv(index=False),
-                                file_name="bier_boruta_stability.csv",
-                                mime="text/csv"
-                             )
+    # Stage 5 Expander
+    with st.expander("Stage 5: Lag Selection (ACF/PACF)", expanded=True):
+        st.markdown("### Stage 5: Autocorrelation Analysis")
+        st.info("Identify significant time lags for feature engineering. This helps determine which past values (momentum) are most predictive.")
+        
+        st.markdown("""
+        **Methodology:**
+        - **ACF**: Checks correlation with past lags (1-100).
+        - **PACF**: Checks direct correlation removing intermediate lags (1-30).
+        - **Significance**: Lags outside the shaded area are statistically significant.
+        """)
+        
+                     
+        # Options
+        confidence_level = st.slider("Confidence Level", 0.80, 0.99, 0.95, 0.01, help="Higher confidence means wider bands (stricter significance). Standard is 0.95.")
+        alpha = 1.0 - confidence_level
+        
+        if st.button("Run Lag Analysis (Stage 5)", type="primary"):
+             if 'fa_results' not in st.session_state or st.session_state.fa_results is None:
+                 st.error("Please run the Correlation Analysis (Stage 1) first to load the data (need target returns).")
+             else:
+                 # Re-get data for target asset
+                 start_str_fa = start_date_fa.strftime('%Y-%m-%d')
+                 end_str_fa = end_date_fa.strftime('%Y-%m-%d')
+                 # We only need the target asset price/returns
+                 df_full, _ = matrix_strategy.get_strategy_df(start_str_fa, end_str_fa, asset="btc") # Assuming BTC is target
+                 
+                 target_col = 'close' # Default
+                 if target_col not in df_full.columns:
+                     st.error("Target 'close' column not found.")
+                 else:
+                     series_returns = df_full[target_col].pct_change().dropna()
+                     
+                     acf_df, pacf_df, sig_thresh = feature_analysis.analyze_acf_pacf(series_returns, alpha=alpha)
+                     
+                     # Plot ACF
+                     st.subheader(f"Autocorrelation Function (ACF) - {confidence_level*100:.0f}% CI")
+                     st.caption("Shows correlation between returns today and returns X days ago.")
+                     
+                     fig_acf = go.Figure()
+                     fig_acf.add_trace(go.Bar(
+                         x=acf_df['Lag'], 
+                         y=acf_df['ACF'], 
+                         name='ACF',
+                         hovertemplate='Lag: %{x}<br>ACF: %{y:.3f}<extra></extra>'
+                     ))
+                     # Confidence Interval (approx)
+                     fig_acf.add_hrect(
+                         y0=-sig_thresh, y1=sig_thresh, 
+                         fillcolor="rgba(0,0,255,0.2)", line_width=0,
+                         annotation_text=f"{confidence_level*100:.0f}% Confidence Band", annotation_position="top right"
+                     )
+                     fig_acf.update_layout(xaxis_title="Lag (Days)", yaxis_title="Correlation")
+                     st.plotly_chart(fig_acf, use_container_width=True)
+                     
+                     with st.expander("ℹ️ How to interpret ACF"):
+                         st.markdown("""
+                         **ACF** shows the correlation of the series with itself at different lags.
+                         - **Slow Decay**: Indicates a trend (momentum).
+                         - **Sharp Cutoff**: Indicates specific memory.
+                         - **Spikes > Blue Band**: Statistically significant correlations. Use these lags as features.
+                         """)
+                     
+                     # Significant ACF Lags
+                     sig_acf = acf_df[acf_df['Significant']]['Lag'].tolist()
+                     st.write(f"**Significant ACF Lags**: {sig_acf[:20]} ...")
+                     
+                     st.divider()
+                     
+                     # Plot PACF
+                     st.subheader(f"Partial Autocorrelation Function (PACF) - {confidence_level*100:.0f}% CI")
+                     st.caption("Shows direct correlation at Lag X, removing effects of intermediate lags (1 to X-1).")
+                     
+                     fig_pacf = go.Figure()
+                     fig_pacf.add_trace(go.Bar(
+                         x=pacf_df['Lag'], 
+                         y=pacf_df['PACF'], 
+                         name='PACF', 
+                         marker_color='orange',
+                         hovertemplate='Lag: %{x}<br>PACF: %{y:.3f}<extra></extra>'
+                     ))
+                     fig_pacf.add_hrect(
+                         y0=-sig_thresh, y1=sig_thresh, 
+                         fillcolor="rgba(0,0,255,0.2)", line_width=0
+                     )
+                     fig_pacf.update_layout(xaxis_title="Lag (Days)", yaxis_title="Partial Correlation")
+                     st.plotly_chart(fig_pacf, use_container_width=True)
+                     
+                     with st.expander("ℹ️ How to interpret PACF"):
+                         st.markdown("""
+                         **PACF** isolates the specific contribution of each lag.
+                         - **Lag 1 Spike**: Strong immediate momentum.
+                         - **Lag 7 Spike**: Weekly seasonality.
+                         - **Lag 30 Spike**: Monthly seasonality.
+                         """)
+                     
+                     # Significant PACF Lags
+                     sig_pacf = pacf_df[pacf_df['Significant']]['Lag'].tolist()
+                     st.markdown(f"**Significant PACF Lags**: {sig_pacf}")
+                     
+                     st.success("Analysis Complete. Use these lags (e.g., 1, 3, 5, 7, 30) for constructing momentum features.")
 
 # Only show Dashboard controls if in Dashboard mode
 if app_mode == "Dashboard":
