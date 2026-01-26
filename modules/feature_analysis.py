@@ -12,6 +12,10 @@ from sklearn.metrics import mutual_info_score
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestRegressor
+from boruta import BorutaPy
+from sklearn.ensemble import RandomForestRegressor
+from boruta import BorutaPy
 
 def calculate_mi_ranking(df, target_col='close', lookahead=7, bins=50):
     """
@@ -330,3 +334,130 @@ def analyze_vif_clusters(df, threshold=10):
         # Fallback: Just return raw VIF
         
     return vif_df, recommendations
+
+def analyze_boruta_stability(df, target_col='close', lookahead=7):
+    """
+    Stage 4: Regime Robustness (Boruta Walk-Forward).
+    """
+    df_boruta = df.copy()
+    
+    # 1. Create Target
+    
+    # 1. Create Target (can introduce NaNs at end)
+    df_boruta['target_returns'] = df_boruta[target_col].pct_change(lookahead).shift(-lookahead)
+    
+    # Do NOT globally dropna. We want to keep early data for some features.
+    # But we must drop rows where TARGET is missing (e.g. at the very end).
+    df_boruta = df_boruta.dropna(subset=['target_returns'])
+    
+    # Ensure index is datetime
+    if 'date' in df_boruta.columns:
+        df_boruta['date'] = pd.to_datetime(df_boruta['date'])
+        df_boruta = df_boruta.set_index('date')
+    elif not isinstance(df_boruta.index, pd.DatetimeIndex):
+         df_boruta.index = pd.to_datetime(df_boruta.index)
+
+    # Features (Numeric Only)
+    feature_cols_all = [c for c in df_boruta.columns if c not in [target_col, 'target_returns', 'date']]
+    
+    # Align full X and y on index
+    # (Since we only dropped target_returns NaN, they should be aligned, but let's be safe)
+    y_full = df_boruta['target_returns']
+    X_full = df_boruta[feature_cols_all] # Keep all numeric cols, some may have NaNs
+    
+    start_date = X_full.index.min()
+    end_date = X_full.index.max()
+    print(f"DEBUG: Start Date: {start_date}, End Date: {end_date}")
+    
+    current_date = start_date
+    windows_results = []
+    total_windows_attempted = 0
+    
+    # Stats Tracking
+    feature_stats = {f: {'available': 0, 'confirmed': 0} for f in feature_cols_all}
+    
+    # 6-month windows loop
+    while current_date < end_date:
+        window_end = current_date + pd.DateOffset(months=6)
+        train_end = current_date + pd.DateOffset(months=4)
+        
+        if train_end > end_date:
+            break
+            
+        # Get Window Slice
+        mask_window = (X_full.index >= current_date) & (X_full.index < train_end)
+        X_window_raw = X_full.loc[mask_window]
+        y_window = y_full.loc[mask_window]
+        
+        # Determine Valid Features for THIS window
+        # Allow features that have full coverage (no NaNs) in this specific window
+        # or maybe allow small % missing? Let's say we require 100% coverage for the window to include the feature.
+        # This allows "New Features" to be excluded from Old Windows, but included in New Windows.
+        features_in_window = X_window_raw.columns[X_window_raw.notna().all()].tolist()
+        
+        if len(features_in_window) < 1:
+             current_date = window_end
+             continue
+             
+        X_train = X_window_raw[features_in_window]
+        
+        # Check sample size
+        if len(X_train) > 10: 
+            total_windows_attempted += 1
+            print(f"DEBUG: Window {total_windows_attempted} ({current_date.date()} to {train_end.date()}): {len(X_train)} samples, {len(features_in_window)} features")
+            
+            # Boruta Setup
+            rf = RandomForestRegressor(n_jobs=-1, max_depth=10, n_estimators=500) 
+            feat_selector = BorutaPy(rf, n_estimators='auto', verbose=0, random_state=42, max_iter=100, alpha=0.01)
+            
+            try:
+                feat_selector.fit(X_train.values, y_window.values)
+                
+                confirmed = X_train.columns[feat_selector.support_].tolist()
+                tentative = X_train.columns[feat_selector.support_weak_].tolist()
+                
+                # Update Stats
+                for f in features_in_window:
+                    feature_stats[f]['available'] += 1
+                    
+                for f in confirmed:
+                    feature_stats[f]['confirmed'] += 1
+                for f in tentative:
+                    feature_stats[f]['confirmed'] += 1 # Treating tentative as confirmed
+                    
+            except Exception as e:
+                print(f"Boruta failed for window {current_date}: {e}")
+        
+        current_date = window_end
+
+    # Aggregate
+    stability_data = []
+    
+    # Only report on features that were available at least once
+    # Or report all, with 0 availability?
+    for feat, stats in feature_stats.items():
+        avail = stats['available']
+        confirmed = stats['confirmed']
+        
+        if avail > 0:
+            pct = confirmed / avail
+            
+            if pct >= 0.7:
+                 status = "Robust"
+            elif pct >= 0.3:
+                 status = "Regime-Sensitive"
+            else:
+                 status = "Inconsistent"
+                 
+            stability_data.append({
+                'Feature': feat,
+                'Stability_Score': pct,
+                'Status': status,
+                'Windows_Count': avail,
+                'Confirmed_Count': confirmed
+            })
+            
+    if not stability_data:
+        return pd.DataFrame(columns=['Feature', 'Stability_Score', 'Status', 'Windows_Count']), 0
+            
+    return pd.DataFrame(stability_data).sort_values('Stability_Score', ascending=False), total_windows_attempted

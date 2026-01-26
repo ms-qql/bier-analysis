@@ -312,6 +312,95 @@ if app_mode == "Feature Analysis":
                                     mime="text/csv"
                                  )
 
+    # Stage 4 Expander
+    with st.expander("Stage 4: Regime Robustness (Boruta Walk-Forward)", expanded=True):
+        st.markdown("### Stage 4: Feature Stability Analysis")
+        st.info("We split the training period into 6-month windows and run Boruta on each to test feature stability across market regimes.")
+        
+        st.markdown("""
+        **Methodology:**
+        - **Windows**: 6-month non-overlapping periods.
+        - **Training**: First 4 months of each window.
+        - **Selection**: Boruta (Shadow Features) with Random Forest (500 trees).
+        - **Score**: % of windows where feature was confirmed.
+        """)
+        
+        if st.button("Run Regime Robustness Analysis (Stage 4)", type="primary"):
+             if 'fa_results' not in st.session_state or st.session_state.fa_results is None:
+                 st.error("Please run the Correlation Analysis (Stage 1) first to load the data.")
+             else:
+                 with st.spinner(f"Running Walk-Forward Boruta Analysis (This takes time!)..."):
+                     start_str_fa = start_date_fa.strftime('%Y-%m-%d')
+                     end_str_fa = end_date_fa.strftime('%Y-%m-%d')
+                     df_full, _ = matrix_strategy.get_strategy_df(start_str_fa, end_str_fa, asset="btc")
+                     
+                     # Filter Features to Test set
+                     df_categories = database.read_categories()
+                     test_metrics, _ = database.load_category_list('test', metric='', df=df_categories)
+                     cols_to_keep = ['date', 'close'] + [col for col in test_metrics if col in df_full.columns]
+                     
+                     # Data for Boruta
+                     # Ensure we keep date even if string, so don't blindly select_dtypes yet
+                     df_boruta_input = df_full[cols_to_keep].copy()
+                     
+                     # Drop NaNs but keep Date
+                     # First convert date to datetime if possible to make it numeric-ish (timestamp) or just keep it
+                     # Better: Convert date to datetime in DF, then select dtypes include datetime?
+                     # Or just manual dropna on numeric columns but keep date
+                     
+                     
+                     numeric_cols = df_boruta_input.select_dtypes(include=[np.number]).columns.tolist()
+                     
+                     
+                     # Check which feature limits the data (Limiting Factor)
+                     # We can keep this warning logic, but we should not filter yet.
+                     if not df_boruta_input.empty:
+                         first_valid_indices = df_boruta_input[numeric_cols].apply(lambda col: col.first_valid_index())
+                         if not first_valid_indices.empty:
+                             nan_counts = df_boruta_input[numeric_cols].isna().sum()
+                             max_nans = nan_counts.max()
+                             worst_col = nan_counts.idxmax()
+                             
+                             if max_nans > 0:
+                                 st.info(f"ℹ️ Note: Feature **'{worst_col}'** has {max_nans} missing values. Stage 4 will dynamically exclude it from windows where data is missing.")
+                     
+                     # DO NOT DROPNA HERE. Let Boruta handle it per window.
+                     # df_boruta_input = df_boruta_input.dropna(subset=numeric_cols)
+                     
+                     if df_boruta_input.empty:
+                         st.error("No data available for Boruta analysis.")
+                     else:
+                         stability_df, total_windows = feature_analysis.analyze_boruta_stability(df_boruta_input)
+                         
+                         if total_windows == 0:
+                             st.warning("Not enough data to form any 6-month windows.")
+                         else:
+                             st.success(f"Analysis completed across {total_windows} windows.")
+                             
+                             # Summary Metrics
+                             robust_count = len(stability_df[stability_df['Status'] == 'Robust'])
+                             sensitive_count = len(stability_df[stability_df['Status'] == 'Regime-Sensitive'])
+                             inconsistent_count = len(stability_df[stability_df['Status'] == 'Inconsistent'])
+                             
+                             c1, c2, c3 = st.columns(3)
+                             c1.metric("Robust (Keep)", robust_count)
+                             c2.metric("Sensitive (Review)", sensitive_count)
+                             c3.metric("Inconsistent (Drop)", inconsistent_count)
+                             
+                             # Display Table
+                             st.dataframe(stability_df.style.applymap(
+                                 lambda x: 'background-color: #90ee90' if x == 'Robust' else ('background-color: #ffe4b5' if x == 'Regime-Sensitive' else 'background-color: #ffcccb'),
+                                 subset=['Status']
+                             ), use_container_width=True)
+                             
+                             # Download
+                             st.download_button(
+                                label="Download Boruta Stability Report (CSV)",
+                                data=stability_df.to_csv(index=False),
+                                file_name="bier_boruta_stability.csv",
+                                mime="text/csv"
+                             )
+
 # Only show Dashboard controls if in Dashboard mode
 if app_mode == "Dashboard":
     # Selection Options
