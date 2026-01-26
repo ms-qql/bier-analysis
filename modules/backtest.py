@@ -15,6 +15,8 @@ from . import matrix_strategy
 from . import database 
 
 
+MAX_COMBI_SIZE=3
+SHARPE_FILTER=0.5
 
 
 class Matrix(TrailingStrategy):
@@ -279,7 +281,7 @@ def get_backtest_stats(start_date, end_date, asset, okx_data, strategy_selected)
     return statistics 
 
 
-def get_backtest_stats_dict(df_bt, allow_short=False):
+def  get_backtest_stats_dict(df_bt, allow_short=False):
     """
     Helper to run backtest and return a dictionary of key stats.
     """
@@ -334,7 +336,7 @@ def get_backtest_stats_dict(df_bt, allow_short=False):
         }
 
 @anvil.server.callable
-def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_signal, alt_signal_deviation, allow_short=False, max_combination_size=1):
+def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_signal, alt_signal_deviation, allow_short=False, max_combination_size=MAX_COMBI_SIZE):
     """
     Batch backtest for all metrics with 'test=1' in database.
     After individual tests, tests combinations of profitable metrics (up to max_combination_size).
@@ -424,7 +426,7 @@ def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_sig
             results.append(f"{metric}: {stats['return']:.2f}%")
             
             # Track profitable metrics with good Sharpe ratio
-            if stats['sharpe'] > 0.7:
+            if stats['sharpe'] > SHARPE_FILTER:
                 profitable_metrics.append(metric)
                 print(f"  ✓ Good Sharpe: {stats['sharpe']:.2f} (Return: {stats['return']:.2f}%)")
             else:
@@ -435,7 +437,7 @@ def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_sig
     
     # PHASE 2: Test Combinations of Profitable Metrics
     if len(profitable_metrics) >= 2:
-        print(f"\n=== PHASE 2: Testing Combinations of {len(profitable_metrics)} Metrics (Sharpe > 0.5) ===")
+        print(f"\n=== PHASE 2: Testing Combinations of {len(profitable_metrics)} Metrics (Sharpe > {SHARPE_FILTER}) ===")
         print(f"Max combination size: {max_combination_size}")
         
         total_combos = 0

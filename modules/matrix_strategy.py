@@ -134,88 +134,125 @@ def calc_metric(start_date = "2020-01-01", end_date = "2026-01-01", metric='risk
   return df.to_json()
 
 
-def calc_metric_all(start_date = "2020-01-01", end_date = "2026-01-01", metric='risk_level', asset='btc'):   
-
-  print(f'Calc {metric} from {start_date} to {end_date} for {asset.upper()}')
-  matrix = matrix_strategy()
-
-  if asset.lower() == 'btc':
-    # Load Data
-    df_itc = database.read_table_date_range_cloud('itc', start_date, end_date)  
-    df_capriole = database.read_table_date_range_cloud('capriole2', start_date, end_date) 
-    df_bmp_full = database.read_table_date_range_cloud('bmp2', start_date, end_date)  
-    df_manta = database.read_table_date_range_cloud('manta', start_date, end_date)
-    df_manta.rename(columns = {'mi_correlation_norm' : 'correlation', 'mi_low_beta_norm' : 'beta'}, inplace = True)  
-    df_manta['funding_rate_all'] = 50 + df_manta['funding_pos']/2 - df_manta['funding_neg']/2
-    df_augmento = database.read_table_date_range_cloud('augmento', start_date, end_date)   
-    df_tv = database.read_table_date_range_cloud('macro', start_date, end_date)
-    df_tv.rename(columns = {'pmi_norm' : 'pmi', 'dxy_norm' : 'dxy', 'liq_norm' : 'liquidity_tv', 'dfg_norm' : 'dfg', 'usdt_dom_norm' : 'usdt_dom'}, inplace = True)       
-
-    df_categories = database.read_categories() # read once for all categories
-    #print('DF Categories: ', df_categories.tail(3))
-    metrics_bmp_list, metrics_bmp_full_list_norm = database.load_category_list('bmp', metric='', df=df_categories)
-    metrics_bmp_full_list = ['date', 'close'] + metrics_bmp_list    
-    #print("Metrics BMP: ", metrics_bmp_full_list) 
-    metrics_capriole_list, metrics_capriole_full_list_norm = database.load_category_list('capriole', metric='', df=df_categories)
-    metrics_capriole_full_list = ['date'] + metrics_capriole_list    
-    #print("Metrics Capriole: ", metrics_capriole_full_list)     
-    metrics_manta_list, metrics_manta_full_list_norm = database.load_category_list('manta', metric='', df=df_categories)
-    metrics_manta_full_list = ['date'] + metrics_manta_list    
-    #print("Metrics Manta: ", metrics_manta_full_list)     
-    metrics_itc_list, metrics_itc_full_list_norm = database.load_category_list('itc', metric='', df=df_categories)  
-    metrics_itc_full_list = ['date'] + metrics_itc_list 
-    #print("Metrics ITC: ", metrics_itc_full_list)         
-    metrics_tv_list, metrics_tv_full_list_norm = database.load_category_list('tv', metric='', df=df_categories)      
-    metrics_tv_full_list = ['date'] + metrics_tv_list
-    #print("Metrics TV: ", metrics_tv_full_list)            
-    metrics_augmento_full_list = ['date','augmento'] 
-
-    df = df_bmp_full[metrics_bmp_full_list]     
+def get_strategy_df(start_date="2020-01-01", end_date="2026-01-01", asset='btc'):
+    """
+    Fetches and merges all strategy data into a single DataFrame.
+    Returns the DataFrame and a dictionary of metric lists.
+    """
+    matrix = matrix_strategy()
     
-    # Robust Merging: Use try-except to handle any data inconsistencies
+    if asset.lower() != 'btc':
+        print(f'Risk matrix for {asset}')
+        non_btc_metrics_list = ['risk_level','roi']
+        df_itc = database.read_table_date_range_cloud('itc', start_date, end_date) 
+        symbol = asset.lower() + '_usd'
+        symbol_risk = symbol + '_risk'
+        df = df_itc[['date', symbol, symbol_risk]].copy()
+        df = df.rename(columns={symbol: "close", symbol_risk:"risk_level"})
+        df['roi'] = (df['close'] - df['close'].shift(90)) / df['close'] * 100  
+        # Calc norm values
+        for metric in non_btc_metrics_list:
+          norm_name = metric + '_norm'
+          df[norm_name] = matrix.calc_norm(df[metric], norm_lookback)       
+        df = calc_ohlc(df)       
+        df = df.fillna(0)
+        
+        # Return simplified structure for non-BTC assets
+        return df, {'all_metrics': non_btc_metrics_list}
+
+    # Load Data for BTC
+    # Helper to clean DF before merge
+    def clean_df(df_in, drop_close=True):
+        if df_in is None or df_in.empty:
+            return pd.DataFrame()
+        if 'id' in df_in.columns:
+            df_in = df_in.drop(columns=['id'])
+        if drop_close and 'close' in df_in.columns:
+            df_in = df_in.drop(columns=['close'])
+        if 'price_usd_close' in df_in.columns: # Manta specific
+             df_in = df_in.drop(columns=['price_usd_close'])
+        return df_in
+
+    # Base DF: BMP2 (contains close)
+    df_bmp_full = database.read_table_date_range_cloud('bmp2', start_date, end_date)  
+    if 'id' in df_bmp_full.columns:
+        df_bmp_full = df_bmp_full.drop(columns=['id'])
+    
+    df = df_bmp_full # Base
+
+    # Caprole
+    df_capriole = database.read_table_date_range_cloud('capriole2', start_date, end_date) 
+    df_capriole = clean_df(df_capriole)
+
+    # ITC
+    df_itc = database.read_table_date_range_cloud('itc', start_date, end_date)  
+    df_itc = clean_df(df_itc)
+
+    # Manta
+    df_manta = database.read_table_date_range_cloud('manta', start_date, end_date)
+    df_manta = clean_df(df_manta)
+    if not df_manta.empty:
+        df_manta.rename(columns = {'mi_correlation_norm' : 'correlation', 'mi_low_beta_norm' : 'beta'}, inplace = True)  
+        df_manta['funding_rate_all'] = 50 + df_manta['funding_pos']/2 - df_manta['funding_neg']/2
+
+    # Augmento
+    df_augmento = database.read_table_date_range_cloud('augmento', start_date, end_date)   
+    df_augmento = clean_df(df_augmento)
+
+    # TV / Macro
+    df_tv = database.read_table_date_range_cloud('macro', start_date, end_date)
+    df_tv = clean_df(df_tv)
+    if not df_tv.empty:
+        df_tv.rename(columns = {'pmi_norm' : 'pmi', 'dxy_norm' : 'dxy', 'liq_norm' : 'liquidity_tv', 'dfg_norm' : 'dfg', 'usdt_dom_norm' : 'usdt_dom'}, inplace = True)       
+
+    # Merges
+    # Use try-except to handle any data inconsistencies
     try:
-        if set(metrics_capriole_full_list).issubset(df_capriole.columns):
-            df = pd.merge(df, df_capriole[metrics_capriole_full_list],on='date', how="outer")
-        else:
-            print(f"Skipping Capriole Merge: Missing columns")
+        if not df_capriole.empty:
+            df = pd.merge(df, df_capriole, on='date', how="outer")
     except Exception as e:
         print(f"Error merging Capriole: {e}")
 
     try:
-        if set(metrics_itc_full_list).issubset(df_itc.columns):
-            df = pd.merge(df, df_itc[metrics_itc_full_list],on='date', how="outer")  # itc      
-        else:
-            print(f"Skipping ITC Merge: Missing columns")
+        if not df_itc.empty:
+            df = pd.merge(df, df_itc, on='date', how="outer")  # itc      
     except Exception as e:
         print(f"Error merging ITC: {e}")
 
     try:
-        if set(metrics_manta_full_list).issubset(df_manta.columns):
-            df = pd.merge(df, df_manta[metrics_manta_full_list],on='date', how="outer")
-        else:
-            print(f"Skipping Manta Merge: Missing columns")
+        if not df_manta.empty:
+            df = pd.merge(df, df_manta, on='date', how="outer")
     except Exception as e:
         print(f"Error merging Manta: {e}")
         
     try:
-        if set(metrics_augmento_full_list).issubset(df_augmento.columns):
-            df = pd.merge(df, df_augmento[metrics_augmento_full_list],on='date', how="outer")
-        else:
-            print(f"Skipping Augmento Merge: Missing columns")
+        if not df_augmento.empty:
+            df = pd.merge(df, df_augmento, on='date', how="outer")
     except Exception as e:
         print(f"Error merging Augmento: {e}")
     
     try:
-        if set(metrics_tv_full_list).issubset(df_tv.columns):
-            df = pd.merge(df, df_tv[metrics_tv_full_list],on='date', how="outer")        
-        else:
-             print(f"Skipping TV Merge: Missing columns")
+        if not df_tv.empty:
+            df = pd.merge(df, df_tv, on='date', how="outer")        
     except Exception as e:
         print(f"Error merging TV: {e}")
 
-    print('DF Metrics: ', df.tail(5))    
+    # Load categories just for list creation (compatibility)
+    df_categories = database.read_categories() 
+    metrics_bmp_list, _ = database.load_category_list('bmp', metric='', df=df_categories)
+    metrics_capriole_list, _ = database.load_category_list('capriole', metric='', df=df_categories)
+    metrics_manta_list, _ = database.load_category_list('manta', metric='', df=df_categories)
+    metrics_itc_list, _ = database.load_category_list('itc', metric='', df=df_categories)  
+    metrics_tv_list, _ = database.load_category_list('tv', metric='', df=df_categories)      
+    
+    # Construct all_metrics_list for legacy compatibility
+    # Note: This might miss new metrics that are not in categories yet, but that's what calc_metric_all expects.
+    # Feature Analysis uses the raw DF so it gets everything.
+    metrics_augmento_full_list = ['augmento'] # simplified, logic below handles details
+    # all_metrics_list = metrics_bmp_list + metrics_capriole_list + metrics_itc_list + metrics_manta_list + metrics_tv_list + ['augmento'] + ['roi', 'liquidity_change', 'nvt_combi', 'realized_price_delta_sth','active_ratio','realized_price_ratio']    
+    # Redefine for line 270 usage
+    metrics_bmp_full_list = ['date', 'close'] + metrics_bmp_list    
 
-    #df['liquidity_tv_norm'] = df['liquidity_tv_norm'].shift(40) # Shift by 40 days
     df['roi'] = (df['close'] - df['close'].shift(90)) / df['close'] * 100 
     df['liquidity_change'] = (df['liquidity'] - df['liquidity'].shift(90)) / df['liquidity'] * 100 
     df['liquidity_change'] = matrix.double_hull_ma(df['liquidity_change'], 10, 10) 
@@ -229,51 +266,47 @@ def calc_metric_all(start_date = "2020-01-01", end_date = "2026-01-01", metric='
     df['nvt_combi'] = np.select(nvt_cond, nvt_category) 
     
     # Calc Z-score for some metrics
-    #df['mvrv'] = matrix.calc_zscore(df['mvrv'])
-    #df['reserve_risk'] = matrix.calc_zscore(df['reserve_risk'])    
-    #print('DF MVRV, RR Z-Score: ', df[['date','mvrv','reserve_risk']].tail(8))       
-    #df['production_margin'] = matrix.calc_zscore(df['production_margin'])  # got errror in calc_zscore
     df['financial_stress'] = matrix.calc_zscore(df['financial_stress'])
     df['bitcoin_sentiment'] = matrix.calc_zscore(df['bitcoin_sentiment'])  
-    #df['rhodl_ratio'] = matrix.calc_zscore(df['rhodl_ratio'])
-    #df['sth_supply'] = matrix.calc_zscore(df['sth_supply'])     
 
     all_metrics_list = metrics_bmp_full_list[1:] + metrics_capriole_list + metrics_itc_list + metrics_manta_list + metrics_tv_list + metrics_augmento_full_list[1:] + ['roi', 'liquidity_change', 'nvt_combi', 'realized_price_delta_sth','active_ratio','realized_price_ratio'] # All metrics without date    
+    
+    # Note: all_metrics_list is used downstream for calc_categories. 
+    # It will contain duplicates if we reconstructed it just now, but calc_categories handles lists.
+    # We should ensure it matches what was there before roughly, but it's okay if columns are present in DF but not in this list (they just won't be normalized in calc_categories)
+    
 
-    print('DF_Strategy: ', df.tail(5))#, df.info())  
-    os.makedirs('data', exist_ok=True)
-    df.to_csv('data/strategy.csv')
-    #print('DF Calc: ', df[['date', 'close']], df.info())   
+    return df, {'all_metrics': all_metrics_list}
 
-    df = calc_categories(df.to_json(), metric, all_metrics_list)
-    print('Calc all: ', df, df.columns)
-    df = calc_ohlc(df)
-    #print('OHLC:', df[['date', 'open', 'high', 'low', 'close']])
-    #df.to_csv('strategy_ohlc.csv')
+
+def calc_metric_all(start_date = "2020-01-01", end_date = "2026-01-01", metric='risk_level', asset='btc'):   
+  print(f'Calc {metric} from {start_date} to {end_date} for {asset.upper()}')
+  
+  df, metrics_data = get_strategy_df(start_date, end_date, asset)
+  
+  if asset.lower() == 'btc':
+      all_metrics_list = metrics_data['all_metrics']
+      
+      print('DF_Strategy: ', df.tail(5))
+      os.makedirs('data', exist_ok=True)
+      df.to_csv('data/strategy.csv')
+      
+      # Now pass DataFrame directly to calc_categories instead of via JSON
+      df = calc_categories(df, metric, all_metrics_list)
+      print('Calc all: ', df, df.columns)
+      df = calc_ohlc(df)
   else:
-    print(f'Risk matrix for {asset}')
-    non_btc_metrics_list = ['risk_level','roi']
-    df_itc = database.read_table_date_range_cloud('itc', start_date, end_date) 
-    symbol = asset.lower() + '_usd'
-    symbol_risk = symbol + '_risk'
-    df = df_itc[['date', symbol, symbol_risk]].copy()
-    df = df.rename(columns={symbol: "close", symbol_risk:"risk_level"})
-    df['roi'] = (df['close'] - df['close'].shift(90)) / df['close'] * 100  
-    # Calc norm values
-    for metric in non_btc_metrics_list:
-      norm_name = metric + '_norm'
-      df[norm_name] = matrix.calc_norm(df[metric], norm_lookback)       
-    df = calc_ohlc(df)       
-    df = df.fillna(0)
-    #df = df.replace([np.inf, -np.inf], 0)
-    os.makedirs('data', exist_ok=True)
-    df.to_csv('data/strategy.csv')       
-
+      os.makedirs('data', exist_ok=True)
+      df.to_csv('data/strategy.csv')
+      
   return df.to_json()
 
 
-def calc_categories(calc_json, single_metric, metrics_list):  
-  df = pd.read_json(StringIO(calc_json), orient='records') 
+def calc_categories(calc_input, single_metric, metrics_list):  
+  if isinstance(calc_input, pd.DataFrame):
+      df = calc_input.copy()
+  else:
+      df = pd.read_json(StringIO(calc_input), orient='records')  
 
   matrix = matrix_strategy()
 

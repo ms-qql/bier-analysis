@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.io as pio
+from plotly.subplots import make_subplots
 from datetime import datetime, date, timedelta
 import os
 from dotenv import load_dotenv
@@ -21,6 +22,7 @@ from modules import database
 from modules import matrix_strategy
 from modules import graphs
 from modules import backtest
+from modules import feature_analysis
 
 # --- CSS for Premium Look ---
 # Default Streamlit dark mode should handle this better without custom background overrides.
@@ -42,15 +44,141 @@ st.markdown("""
 # --- Sidebar Controls ---
 st.sidebar.title("BIER Controls")
 
-# Date Selection
-col1, col2 = st.sidebar.columns(2)
-with col1:
-    start_date = st.date_input("Start Date", date(2018, 1, 1))
-with col2:
-    end_date = st.date_input("End Date", date.today())
+# Mode Selection
+app_mode = st.sidebar.radio("Mode", ["Dashboard", "Feature Analysis"], index=0)
 
-# Selection Options
-asset = st.sidebar.selectbox("Select Asset", ["BTC", "ETH"], index=0)
+if app_mode == "Feature Analysis":
+    st.title("Feature Reduction Analysis")
+    st.markdown("### Stage 1: Pearson Correlation Filter")
+    
+    # Date Selection for Analysis
+    col_fa1, col_fa2 = st.columns(2)
+    with col_fa1:
+        start_date_fa = st.date_input("Start Date", date(2018, 1, 1), key="fa_start")
+    with col_fa2:
+        end_date_fa = st.date_input("End Date", date.today(), key="fa_end")
+        
+    # Session State for Analysis Results
+    if 'fa_results' not in st.session_state:
+        st.session_state.fa_results = None
+
+    threshold = st.slider("Correlation Threshold", 0.8, 1.0, 0.95, 0.01, help="Features with correlation higher than this will be flagged.")
+    
+    if st.button("Load Data & Calculate Correlation", type="primary"):
+        with st.spinner("Loading data and calculating correlations..."):
+            start_str_fa = start_date_fa.strftime('%Y-%m-%d')
+            end_str_fa = end_date_fa.strftime('%Y-%m-%d')
+            
+            # Get DataFrame directly
+            df_raw, _ = matrix_strategy.get_strategy_df(start_str_fa, end_str_fa, asset="btc")
+            
+            # --- FEATURE SELECTION: Filter by 'test' set ---
+            df_categories = database.read_categories()
+            test_metrics, _ = database.load_category_list('test', metric='', df=df_categories)
+            
+            # Ensure we keep date and close (for reference) and test metrics
+            cols_to_keep = ['date', 'close'] + [col for col in test_metrics if col in df_raw.columns]
+            
+            # Identify missing requested metrics for debug
+            missing_requested = [col for col in test_metrics if col not in df_raw.columns]
+            
+            with st.expander("Debug Info: Feature Selection Details"):
+                st.write(f"**Total DF Columns:** {len(df_raw.columns)}")
+                st.write(f"**Requested 'Test' Metrics:** {len(test_metrics)}")
+                if missing_requested:
+                    st.error(f"**Requested but Missing in Data ({len(missing_requested)}):** {missing_requested}")
+                else:
+                    st.success("All requested 'test' metrics found in data.")
+                
+                st.write("**Columns available in Data:**")
+                st.write(sorted(df_raw.columns.tolist()))
+            
+            if len(cols_to_keep) > 2: 
+                 df_raw = df_raw[cols_to_keep]
+                 st.toast(f"Filtered to {len(cols_to_keep)-2} features from 'test' category.", icon="✅")
+            else:
+                 st.warning("No features found in 'test' category matching the data. Using all available features.")
+
+            # Prepare for correlation: Drop 'date' and 'close'
+            df_for_corr = df_raw.drop(columns=['date', 'close'], errors='ignore')
+
+            # Filter numeric and calculate correlation
+            corr_matrix = feature_analysis.calculate_correlation(df_for_corr)
+            
+            # Store in session state
+            st.session_state.fa_results = {
+                'corr_matrix': corr_matrix,
+                'df_raw_columns': df_for_corr.columns.tolist() # Only feature columns
+            }
+            
+    # Display Results if Available
+    if st.session_state.fa_results:
+        corr_matrix = st.session_state.fa_results['corr_matrix']
+        df_raw_columns = st.session_state.fa_results['df_raw_columns'] 
+        
+        # Identify high correlations (Dynamic based on slider)
+        pairs, to_drop = feature_analysis.identify_high_correlation_features(corr_matrix, threshold)
+        
+        # Sorting for visualization: Alphabetical
+        sorted_cols = sorted(corr_matrix.columns)
+        corr_matrix_sorted = corr_matrix.loc[sorted_cols, sorted_cols]
+        
+        # --- Visualizatons ---
+        st.subheader("Correlation Heatmap")
+        fig_heatmap = feature_analysis.create_heatmap(corr_matrix_sorted)
+        st.plotly_chart(fig_heatmap, use_container_width=True)
+        
+        # --- Results ---
+        st.subheader(f"High Correlation Pairs (|r| > {threshold})")
+        if pairs:
+            df_pairs = pd.DataFrame(pairs, columns=['Feature 1', 'Feature 2', 'Correlation'])
+            # Sort by absolute correlation desc
+            df_pairs['Abs Corr'] = df_pairs['Correlation'].abs()
+            df_pairs = df_pairs.sort_values('Abs Corr', ascending=False).drop(columns=['Abs Corr'])
+            
+            col_res1, col_res2 = st.columns([2, 1])
+            with col_res1:
+                st.dataframe(df_pairs, use_container_width=True)
+            
+            with col_res2:
+                st.markdown("#### Suggested to Drop")
+                st.warning(f"Found {len(to_drop)} features to potential drop.")
+                st.write(to_drop)
+                
+                # Download Filtered List
+                remaining_features = [c for c in df_raw_columns if c not in to_drop and c in corr_matrix.columns]
+                df_remaining = pd.DataFrame(remaining_features, columns=['Kept Features'])
+                
+                st.download_button(
+                    label="Download Kept Features List",
+                    data=df_remaining.to_csv(index=False),
+                    file_name="bier_kept_features.csv",
+                    mime="text/csv"
+                )
+
+        else:
+            st.success("No features found exceeding the correlation threshold.")
+        
+        # --- Downloads ---
+        st.markdown("---")
+        st.download_button(
+            label="Download Correlation Matrix (CSV)",
+            data=corr_matrix.to_csv(),
+            file_name="bier_correlation_matrix.csv",
+            mime="text/csv"
+        )
+
+# Only show Dashboard controls if in Dashboard mode
+if app_mode == "Dashboard":
+    # Selection Options
+    # Date Selection (Global for dashboard)
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        start_date = st.date_input("Start Date", date(2018, 1, 1))
+    with col2:
+        end_date = st.date_input("End Date", date.today())
+    
+    asset = st.sidebar.selectbox("Select Asset", ["BTC", "ETH"], index=0)
 available_categories = ['all_categories', 'capriole', 'bmp', 'manta', 'itc', 'tv', 'strategy', 'market', 'mining', 'macro', 'shortterm', 'sentiment', 'hodl', 'treasury', 'supply_demand', 'eth', 'alts', 'custom', 'bier', 'test']
 category_sel = st.sidebar.selectbox("Select Category / Strategy", available_categories, index=available_categories.index('bier'))
 
@@ -110,10 +238,24 @@ if st.sidebar.button("Show Backtest Results"):
     st.session_state['show_backtest_results'] = True
     st.rerun()
 
+if "confirm_clear" not in st.session_state:
+    st.session_state.confirm_clear = False
+
 if st.sidebar.button("Clear Backtest History", type="secondary"):
-    database.delete_bier_backtest_table_content()
-    st.sidebar.success("Backtest history cleared!")
-    st.rerun()
+    st.session_state.confirm_clear = True
+
+if st.session_state.confirm_clear:
+    st.sidebar.error("This will delete all backtest history. Are you sure?")
+    col1, col2 = st.sidebar.columns(2)
+    if col1.button("Yes", type="primary", key="confirm_yes"):
+        database.delete_bier_backtest_table_content()
+        st.sidebar.success("Backtest history cleared!")
+        st.session_state.confirm_clear = False
+        st.rerun()
+    if col2.button("No", type="secondary", key="confirm_no"):
+        st.session_state.confirm_clear = False
+        st.rerun()
+
 
 # --- Data Loading ---
 @st.cache_data(ttl=3600)
@@ -195,12 +337,20 @@ def load_and_process_data(start_str, end_str, asset_name, cat_sel, use_sig, use_
     df.to_csv(f'data/calc_multi_strategy_streamlit.csv') 
     # Update json_res to include the calculated invest_score for all_categories and custom
     #if cat_sel == 'all_categories' or cat_sel == 'custom':
+    
+    # Remove duplicate columns if any (e.g. from calc_multi_strategy adding existing norm cols)
+    df = df.loc[:, ~df.columns.duplicated()]
+    
     json_res = df.to_json(orient='records')
     
     return df, json_res, metrics_list
 
 # --- Main Dashboard ---
 st.title("BIER Strategy Dashboard")
+
+# Stop execution if in Feature Analysis mode (content already rendered above)
+if app_mode == "Feature Analysis":
+    st.stop()
 
 if update_graphs or 'data_loaded' not in st.session_state or st.session_state.get('show_backtest_results', False):
     st.session_state.data_loaded = True
@@ -406,6 +556,16 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                     with filter_col7:
                         filter_short = st.selectbox("Short Selling", ["All", "Enabled", "Disabled"], index=0, help="Filter by Short Selling flag")
                     
+                    st.markdown("")
+                    filter_col8, filter_col9, filter_col10 = st.columns(3)
+                    with filter_col8:
+                        filter_start_date = st.text_input("Start Date (contains)", help="Filter by year or partial date string (e.g. '2021')", placeholder="e.g. 2021")
+                    with filter_col9:
+                        filter_end_date = st.text_input("End Date (contains)", help="Filter by year or partial date string", placeholder="e.g. 2024")
+                    with filter_col10:
+                        filter_name = st.text_input("Name (contains)", help="Filter by Name", placeholder="e.g. nupl")
+
+                    
                     # Apply filters
                     df_filtered = df_bt_res.copy()
                     active_filters = []
@@ -445,6 +605,19 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                                 df_filtered = df_filtered[df_filtered['short_sell'] == False] 
                                 active_filters.append("Short Selling: Disabled")
                     
+                    if filter_start_date:
+                        df_filtered = df_filtered[df_filtered['start_date'].astype(str).str.contains(filter_start_date, case=False, na=False)]
+                        active_filters.append(f"Start Date: {filter_start_date}")
+
+                    if filter_end_date:
+                        df_filtered = df_filtered[df_filtered['end_date'].astype(str).str.contains(filter_end_date, case=False, na=False)]
+                        active_filters.append(f"End Date: {filter_end_date}")
+
+                    if filter_name:
+                        df_filtered = df_filtered[df_filtered['name'].astype(str).str.contains(filter_name, case=False, na=False)]
+                        active_filters.append(f"Name: {filter_name}")
+
+                    
                     # Show active filters and result count
                     if active_filters:
                         st.info(f"**Active Filters:** {' AND '.join(active_filters)} | **Results:** {len(df_filtered)} of {len(df_bt_res)}")
@@ -462,7 +635,87 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                     
                     st.dataframe(df_display, use_container_width=True)
                     
-                    # Top 10 Performance Charts
+                    # -----------------------------------------------------------------------------
+                    # Metric Contribution Analysis Graph
+                    # -----------------------------------------------------------------------------
+                    st.markdown("---")
+                    st.subheader("Metric Contribution Analysis")
+                    st.markdown("*Analysis of discrete metrics within the filtered results (Single + Combinations)*")
+                    
+                    # 1. Identify all potential metric columns
+                    all_metrics = database.get_all_metrics()
+                    # Filter for columns that actually exist in the results DataFrame
+                    available_metric_cols = [m for m in all_metrics if m in df_filtered.columns]
+                    
+                    # Calculate Relative Rank within the filtered results
+                    # (Global rank might be 15,000, but if we only have 100 rows, we want rank 1-100)
+                    df_filtered['relative_rank'] = df_filtered['avg_rank'].rank(ascending=True)
+
+                    metric_stats = []
+                    
+                    for metric in available_metric_cols:
+                        # Check rows where this metric column is > 0 (meaning it was included)
+                        mask = df_filtered[metric] > 0
+                        subset = df_filtered[mask]
+                        
+                        count = len(subset)
+                        if count > 0:
+                            # Use Relative Rank
+                            avg_r = subset['relative_rank'].mean()
+                            metric_stats.append({
+                                'Metric': metric,
+                                'Occasions': count,
+                                'Avg Rank': avg_r
+                            })
+                    
+                    if metric_stats:
+                        df_stats = pd.DataFrame(metric_stats)
+                        # Sort by Avg Rank (Ascending = Best first)
+                        df_stats = df_stats.sort_values('Avg Rank', ascending=True)
+                        
+                        # Create Dual-Axis Chart
+                        fig_contrib = make_subplots(specs=[[{"secondary_y": True}]])
+                        
+                        # Bar: Occasions
+                        fig_contrib.add_trace(
+                            go.Bar(
+                                x=df_stats['Metric'],
+                                y=df_stats['Occasions'],
+                                name="Occasions",
+                                marker_color='rgba(55, 83, 109, 0.7)',
+                                offsetgroup=1
+                            ),
+                            secondary_y=False,
+                        )
+                        
+                        fig_contrib.add_trace(
+                            go.Scatter(
+                                x=df_stats['Metric'],
+                                y=df_stats['Avg Rank'],
+                                name="Avg Rel. Rank", 
+                                mode='lines+markers',
+                                marker=dict(color='crimson', size=8),
+                                line=dict(width=3),
+                                hovertemplate='Metric: %{x}<br>Avg Rel. Rank: %{y:.0f}<extra></extra>'
+                            ),
+                            secondary_y=True,
+                        )
+                        
+                        fig_contrib.update_layout(
+                            title_text="Metric Frequency & Performance (Relative Rank)", 
+                            xaxis_title="Metric",
+                            yaxis_title="Nb of Occasions",
+                            yaxis2_title="Average Relative Rank",
+                            height=550,
+                            legend=dict(orientation="h", yanchor="top", y=-0.3, xanchor="center", x=0.5),
+                            hovermode="x unified"
+                        )
+                        
+                        fig_contrib.update_yaxes(title_text="Average Relative Rank", secondary_y=True, autorange="reversed")
+                        
+                        st.plotly_chart(fig_contrib, use_container_width=True)
+                    else:
+                        st.info("No metrics found in the filtered selection.")
                     st.markdown("---")
                     st.subheader("Top 10 Performers by Metric")
                     
@@ -565,6 +818,9 @@ if update_graphs or 'data_loaded' not in st.session_state or st.session_state.ge
                             st.plotly_chart(fig_dd, use_container_width=True)
                         else:
                             st.info("No valid drawdown data available.")
+                    
+
+
                 else:
                     st.info("No backtest results found. Run a batch backtest from the sidebar.")
             else:
