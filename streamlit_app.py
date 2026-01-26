@@ -493,6 +493,98 @@ if app_mode == "Feature Analysis":
                      st.markdown(f"**Significant PACF Lags**: {sig_pacf}")
                      
                      st.success("Analysis Complete. Use these lags (e.g., 1, 3, 5, 7, 30) for constructing momentum features.")
+    
+    # Stage 6 Expander
+    with st.expander("Stage 6: Market Regime Detection", expanded=True):
+        st.markdown("### Stage 6: Bull / Bear / Neutral Classification")
+        st.info("Classify the market into regimes to see how your features perform in different environments.")
+        
+        regime_method = st.selectbox("Detection Method", ["Technical (SMA Trend)", "Machine Learning (GMM Clustering)"])
+        
+        if st.button("Run Regime Analysis (Stage 6)", type="primary"):
+             if 'fa_results' not in st.session_state or st.session_state.fa_results is None:
+                 st.error("Please run the Correlation Analysis (Stage 1) first to load the data.")
+             else:
+                 # Re-get data for target asset
+                 start_str_fa = start_date_fa.strftime('%Y-%m-%d')
+                 end_str_fa = end_date_fa.strftime('%Y-%m-%d')
+                 df_full, _ = matrix_strategy.get_strategy_df(start_str_fa, end_str_fa, asset="btc")
+                 
+                 target_col = 'close'
+                 if target_col not in df_full.columns:
+                     st.error("Target 'close' column not found.")
+                 else:
+                     # Prepare Data
+                     df_regime = df_full[['date', 'close']].copy()
+                     df_regime['date'] = pd.to_datetime(df_regime['date'])
+                     
+                     # Drop duplicates on date just in case
+                     df_regime = df_regime.drop_duplicates(subset=['date'])
+                     
+                     df_regime = df_regime.set_index('date').sort_index()
+                     
+                     method_code = "technical" if "Technical" in regime_method else "ml"
+                     
+                     with st.spinner(f"Detecting Regimes using {regime_method}..."):
+                         try:
+                             regimes = feature_analysis.detect_market_regimes(df_regime, method=method_code)
+                             df_regime['Regime'] = regimes
+                             
+                             # Visualize
+                             # We want to color the line segments. 
+                             # Easiest way in plotly is to plot 3 separate lines (Bull, Bear, Neutral) with gaps.
+                             # Or use a Scatter with marker colors? No, line is better.
+                             
+                             # Create Segments
+                             fig_regime = go.Figure()
+                             
+                             # Plot Price (Gray base)
+                             # fig_regime.add_trace(go.Scatter(x=df_regime.index, y=df_regime['close'], name='Price', line=dict(color='lightgray', width=1)))
+                             
+                             # Add colored segments
+                             # This is tricky for Lines. 
+                             # Option: Scatter with colored markers is easier but messy.
+                             # Better Option: Add background rectangles (vrect) for regimes.
+                             
+                             fig_regime.add_trace(go.Scatter(x=df_regime.index, y=df_regime['close'], name='BTC Price', line=dict(color='black', width=1)))
+                             
+                             # Simplify plotting: just colored markers on top? 
+                             # Or identifying changepoints.
+                             
+                             # Efficient VRECT approach:
+                             # Identify blocks of consecutive regimes
+                             df_regime['block'] = (df_regime['Regime'] != df_regime['Regime'].shift(1)).cumsum()
+                             blocks = df_regime.groupby(['Regime', 'block'])['close'].aggregate(['count', lambda x: x.index.min(), lambda x: x.index.max()])
+                             
+                             colors = {'Bull': 'rgba(0, 255, 0, 0.2)', 'Bear': 'rgba(255, 0, 0, 0.2)', 'Neutral': 'rgba(128, 128, 128, 0.2)'}
+                             
+                             for idx, row in blocks.iterrows():
+                                 regime = idx[0]
+                                 if regime in colors:
+                                     fig_regime.add_vrect(
+                                         x0=row['<lambda_0>'], 
+                                         x1=row['<lambda_1>'], 
+                                         fillcolor=colors[regime], 
+                                         opacity=1, 
+                                         layer="below", 
+                                         line_width=0,
+                                         name=regime # Legend hack?
+                                     )
+                             
+                             fig_regime.update_layout(title=f"Bitcoin Market Regimes ({regime_method})", yaxis_title="Price (USD)")
+                             st.plotly_chart(fig_regime, use_container_width=True)
+                             
+                             # stats
+                             counts = df_regime['Regime'].value_counts()
+                             c1, c2, c3 = st.columns(3)
+                             c1.metric("Bull Days", counts.get('Bull', 0))
+                             c2.metric("Bear Days", counts.get('Bear', 0))
+                             c3.metric("Neutral Days", counts.get('Neutral', 0))
+                             
+                             st.success("Regime Detection Complete.")
+                             
+                         except Exception as e:
+                             st.error(f"Error in Regime Detection: {e}")
 
 # Only show Dashboard controls if in Dashboard mode
 if app_mode == "Dashboard":

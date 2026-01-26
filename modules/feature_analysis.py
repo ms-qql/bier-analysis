@@ -15,6 +15,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
 from boruta import BorutaPy
 from statsmodels.tsa.stattools import acf, pacf
+from sklearn.mixture import GaussianMixture
+from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
 from boruta import BorutaPy
 
@@ -506,4 +508,69 @@ def analyze_acf_pacf(series, lags_acf=100, lags_pacf=30, alpha=0.05):
         'Significant': np.abs(pacf_vals) > sig_thresh
     }).iloc[1:] # Drop lag 0
     
+    
     return acf_df, pacf_df, sig_thresh
+
+def detect_market_regimes(df, method="technical", ma_fast=50, ma_slow=200):
+    """
+    Stage 6: Market Regime Detection.
+    Classifies market into Bull (1), Neutral (0), Bear (-1).
+    """
+    df = df.copy()
+    
+    if method == "technical":
+        # Classic SMA Trend Following
+        df['sma_fast'] = df['close'].rolling(ma_fast).mean()
+        df['sma_slow'] = df['close'].rolling(ma_slow).mean()
+        
+        # Determine Regime
+        # Bull: Price > Slow AND Fast > Slow
+        # Bear: Price < Slow AND Fast < Slow
+        # Neutral: Mixed signals
+        
+        conditions = [
+            (df['close'] > df['sma_slow']) & (df['sma_fast'] > df['sma_slow']),
+            (df['close'] < df['sma_slow']) & (df['sma_fast'] < df['sma_slow'])
+        ]
+        choices = ['Bull', 'Bear']
+        
+        df['Regime'] = np.select(conditions, choices, default='Neutral')
+        
+    elif method == "ml":
+        # GMM on Volatility and Returns
+        # Features: Rolling Volatility (20d), Rolling Returns (20d)
+        df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
+        df['vol_20'] = df['log_ret'].rolling(20).std()
+        df['ret_20'] = df['log_ret'].rolling(20).mean()
+        
+        # Drop NaNs
+        data = df[['vol_20', 'ret_20']].dropna()
+        
+        if len(data) > 100:
+            # GMM with 3 components (Bull, Bear, Neutral)
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(data)
+            
+            gmm = GaussianMixture(n_components=3, covariance_type='full', random_state=42)
+            gmm.fit(X_scaled)
+            labels = gmm.predict(X_scaled)
+            
+            # Map labels to meaningful names based on mean returns/vol
+            # We need to see which cluster has high returns (Bull), low returns (Bear), etc.
+            data['cluster'] = labels
+            cluster_summary = data.groupby('cluster')['ret_20'].mean()
+            
+            # Sort clusters by returns: Highest = Bull, Lowest = Bear, Middle = Neutral
+            sorted_clusters = cluster_summary.sort_values(ascending=False).index
+            label_map = {
+                sorted_clusters[0]: 'Bull',
+                sorted_clusters[1]: 'Neutral',
+                sorted_clusters[2]: 'Bear'
+            }
+            
+            data['Regime'] = data['cluster'].map(label_map)
+            df.loc[data.index, 'Regime'] = data['Regime']
+        else:
+            df['Regime'] = 'Neutral' # Not enough data
+            
+    return df['Regime']
