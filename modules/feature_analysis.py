@@ -9,6 +9,9 @@ import plotly.express as px
 from scipy.cluster import hierarchy
 from scipy.spatial.distance import squareform
 from sklearn.metrics import mutual_info_score
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
 def calculate_mi_ranking(df, target_col='close', lookahead=7, bins=50):
     """
@@ -194,3 +197,136 @@ def create_heatmap(corr_matrix, title="Feature Correlation Matrix"):
     )
     
     return fig
+    return fig
+
+def calculate_vif(df):
+    """
+    Calculates Variance Inflation Factor (VIF) for each feature.
+    """
+    # Drop NaNs and ensure numeric
+    df_vif = df.select_dtypes(include=[np.number]).dropna()
+    
+    # Add constant? VIF usually requires constant if not centered, but 
+    # typically we look at feature-vs-feature linear dependency.
+    # VIF requires X.
+    # VIF requires X.
+    if df_vif.empty:
+         return pd.DataFrame(columns=['Feature', 'VIF'])
+         
+    if df_vif.shape[0] < 10:
+         # Not enough samples for reliable VIF
+         return pd.DataFrame(columns=['Feature', 'VIF'])
+
+    # Check for NaNs or Inf just in case
+    if np.any(np.isinf(df_vif.values)) or np.any(np.isnan(df_vif.values)):
+         # Clean invalid values if necessary, or let statsmodels fail/handle
+         pass
+
+    thresh_scores = []
+    
+    # Iterate to calculate VIF for each feature
+    # Note: This can be slow for many features.
+    for i, feature in enumerate(df_vif.columns):
+        try:
+            # VIF = 1 / (1 - R^2)
+            vif = variance_inflation_factor(df_vif.values, i)
+        except Exception:
+            vif = np.inf
+            
+        thresh_scores.append({
+            'Feature': feature,
+            'VIF': vif
+        })
+        
+    return pd.DataFrame(thresh_scores).sort_values('VIF', ascending=False)
+
+def analyze_vif_clusters(df, threshold=10):
+    """
+    Stage 3: VIF Analysis & PCA Selection.
+    1. Calculate VIF.
+    2. Identify High-VIF features (> threshold).
+    3. Cluster High-VIF features (using correlation distance).
+    4. Run PCA on each cluster -> Pick feature with max loading on PC1.
+    
+    Returns:
+        vif_df: DataFrame of all VIF scores.
+        recommendations: List of dicts describing clusters and actions.
+    """
+    # 1. Calculate Full VIF
+    vif_df = calculate_vif(df)
+    
+    # 2. Identify Candidates
+    high_vif_features = vif_df[vif_df['VIF'] > threshold]['Feature'].tolist()
+    
+    recommendations = []
+    
+    if not high_vif_features:
+        return vif_df, recommendations
+
+    # 3. Cluster High-VIF Features
+    # We need the correlation matrix of ONLY the high-vif features
+    df_high = df[high_vif_features]
+    corr_high = df_high.corr().fillna(0)
+    
+    # Distance matrix
+    dist_matrix = 1 - np.abs(corr_high)
+    np.fill_diagonal(dist_matrix.values, 0)
+    
+    try:
+        # Hierarchical Clustering
+        # We need to define a cut-off to form clusters. 
+        # A correlation > 0.7 (distance < 0.3) is usually a good "cluster" proxy for VIF groups, 
+        # or we just cut the tree to find natural groups.
+        # Let's use distance threshold t=0.5 (corr > 0.5) to be safe, or stricter.
+        # Given VIF > 10 usually implies R^2 > 0.9, we expect high correlations.
+        
+        dist_condensed = squareform(dist_matrix)
+        linkage_matrix = hierarchy.linkage(dist_condensed, method='ward')
+        
+        # Form flat clusters
+        # t=1.0 means keeping things quite related
+        cluster_labels = hierarchy.fcluster(linkage_matrix, t=0.5, criterion='distance')
+        
+        # Group features by cluster label
+        clusters = {}
+        for feat, label in zip(high_vif_features, cluster_labels):
+            if label not in clusters:
+                clusters[label] = []
+            clusters[label].append(feat)
+            
+        # 4. PCA Selection per Cluster
+        for label, feats in clusters.items():
+            if len(feats) < 2:
+                continue # Singletons don't need reduction (though they have High VIF? Maybe with outside features?)
+                
+            # Run PCA
+            # Standardize first
+            X = df[feats].dropna()
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+            
+            pca = PCA(n_components=1)
+            pca.fit(X_scaled)
+            
+            # Loadings: pca.components_[0]
+            loadings = np.abs(pca.components_[0])
+            
+            # Find Winner: Max loading
+            winner_idx = np.argmax(loadings)
+            winner = feats[winner_idx]
+            
+            losers = [f for f in feats if f != winner]
+            
+            recommendations.append({
+                'Cluster_ID': int(label),
+                'Features': feats,
+                'Representative_Feature': winner,
+                'Suggested_Drops': losers,
+                'Explained_Variance_PC1': float(pca.explained_variance_ratio_[0])
+            })
+            
+    except Exception as e:
+        print(f"Error in VIF Clustering: {e}")
+        # Fallback: Just return raw VIF
+        
+    return vif_df, recommendations

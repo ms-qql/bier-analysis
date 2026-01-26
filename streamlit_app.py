@@ -225,12 +225,92 @@ if app_mode == "Feature Analysis":
                      st.dataframe(mi_results, use_container_width=True)
                      
                      # Download
-                     st.download_button(
-                        label="Download MI Ranking (CSV)",
-                        data=mi_results.to_csv(index=False),
-                        file_name=f"bier_mi_ranking_{mi_lookahead}d.csv",
-                        mime="text/csv"
-                     )
+                 st.download_button(
+                    label="Download MI Ranking (CSV)",
+                    data=mi_results.to_csv(index=False),
+                    file_name=f"bier_mi_ranking_{mi_lookahead}d.csv",
+                    mime="text/csv"
+                 )
+
+    # Stage 3 Expander
+    with st.expander("Stage 3: Variance Inflation Factor (VIF) & Multicollinearity", expanded=True):
+        st.markdown("### Stage 3: Multicollinearity Reduction (VIF + PCA)")
+        st.info("Features with high VIF (> threshold) are multicollinear. We cluster them and use PCA to pick the best representative feature.")
+        
+        vif_threshold = st.slider("VIF Threshold", 5.0, 50.0, 10.0, 1.0, help="Features with VIF higher than this are considered multicollinear.")
+        
+        if st.button("Run VIF Analysis (Stage 3)", type="primary"):
+            if 'fa_results' not in st.session_state or st.session_state.fa_results is None:
+                 st.error("Please run the Correlation Analysis (Stage 1) first to load the data.")
+            else:
+                 with st.spinner(f"Calculating VIF and Clustering High-VIF Features..."):
+                     start_str_fa = start_date_fa.strftime('%Y-%m-%d')
+                     end_str_fa = end_date_fa.strftime('%Y-%m-%d')
+                     df_full, _ = matrix_strategy.get_strategy_df(start_str_fa, end_str_fa, asset="btc")
+                     
+                     # Filter Features
+                     df_categories = database.read_categories()
+                     test_metrics, _ = database.load_category_list('test', metric='', df=df_categories)
+                     cols_to_keep = [col for col in test_metrics if col in df_full.columns]
+                     
+                     # Data for VIF (numeric only, no date/close) feature set
+                     df_vif_input = df_full[cols_to_keep].copy()
+                     df_vif_input = df_vif_input.select_dtypes(include=[np.number]).dropna()
+                     
+                     if df_vif_input.empty:
+                         st.error("No data available for VIF analysis after dropping NaNs.")
+                     else:
+                         vif_df, recommendations = feature_analysis.analyze_vif_clusters(df_vif_input, threshold=vif_threshold)
+                         
+                         col_vif1, col_vif2 = st.columns([1, 2])
+                         
+                         with col_vif1:
+                             st.subheader("VIF Scores")
+                             st.dataframe(vif_df, use_container_width=True)
+                             
+                             st.download_button(
+                                label="Download VIF Scores (CSV)",
+                                data=vif_df.to_csv(index=False),
+                                file_name="bier_vif_scores.csv",
+                                mime="text/csv"
+                             )
+                             
+                         with col_vif2:
+                             st.subheader("Cluster Analysis & Recommendations")
+                             
+                             if not recommendations:
+                                 st.success(f"No features found with VIF > {vif_threshold}. No reduction needed based on Multicollinearity.")
+                             else:
+                                 st.warning(f"Found {len(recommendations)} clusters of multicollinear features.")
+                                 
+                                 for rec in recommendations:
+                                     with st.container(border=True):
+                                         st.markdown(f"**Cluster {rec['Cluster_ID']}** (Explained Variance by PC1: {rec['Explained_Variance_PC1']:.2%})")
+                                         c1, c2 = st.columns(2)
+                                         with c1:
+                                             st.markdown("✅ **Keep (Representative)**")
+                                             st.code(rec['Representative_Feature'])
+                                         with c2:
+                                             st.markdown("❌ **Suggest Drop (Redundant)**")
+                                             if rec['Suggested_Drops']:
+                                                st.write(rec['Suggested_Drops'])
+                                             else:
+                                                st.write("None")
+                                 
+                                 # Create Kept Features List from VIF
+                                 all_suggested_drops = []
+                                 for r in recommendations:
+                                     all_suggested_drops.extend(r['Suggested_Drops'])
+                                     
+                                 kept_features_vif = [f for f in df_vif_input.columns if f not in all_suggested_drops]
+                                 df_kept_vif = pd.DataFrame(kept_features_vif, columns=['Kept Features (After VIF)'])
+                                 
+                                 st.download_button(
+                                    label="Download Kept Features (Post-VIF)",
+                                    data=df_kept_vif.to_csv(index=False),
+                                    file_name="bier_kept_features_vif.csv",
+                                    mime="text/csv"
+                                 )
 
 # Only show Dashboard controls if in Dashboard mode
 if app_mode == "Dashboard":
