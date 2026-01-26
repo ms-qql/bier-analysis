@@ -167,10 +167,23 @@ def get_strategy_df(start_date="2020-01-01", end_date="2026-01-01", asset='btc')
             return pd.DataFrame()
         if 'id' in df_in.columns:
             df_in = df_in.drop(columns=['id'])
+        
+        # Drop OHLC columns to avoid overlap during merge or strict OHLC calc later
+        cols_to_drop = []
         if drop_close and 'close' in df_in.columns:
-            df_in = df_in.drop(columns=['close'])
+            cols_to_drop.append('close')
+            
+        # Also drop open, high, low if present (often in macro/tv data)
+        for c in ['open', 'high', 'low']:
+            if c in df_in.columns:
+                cols_to_drop.append(c)
+                
         if 'price_usd_close' in df_in.columns: # Manta specific
-             df_in = df_in.drop(columns=['price_usd_close'])
+             cols_to_drop.append('price_usd_close')
+             
+        if cols_to_drop:
+            df_in = df_in.drop(columns=cols_to_drop)
+            
         return df_in
 
     # Base DF: BMP2 (contains close)

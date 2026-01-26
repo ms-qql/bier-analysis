@@ -2,8 +2,104 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import plotly.express as px
 from scipy.cluster import hierarchy
 from scipy.spatial.distance import squareform
+from sklearn.metrics import mutual_info_score
+
+def calculate_mi_ranking(df, target_col='close', lookahead=7, bins=50):
+    """
+    Calculates Mutual Information (MI) between features and future returns.
+    Uses Equal-Frequency Binning and Miller-Madow bias correction.
+    
+    Args:
+        df: Input DataFrame containing features and target.
+        target_col: Name of the target column (usually 'close' price).
+        lookahead: Number of days to look ahead for target returns.
+        bins: Number of bins for discretization.
+        
+    Returns:
+        pd.DataFrame: Sorted dataframe with 'Feature' and 'MI_Score'.
+    """
+    df_mi = df.copy()
+    
+    # 1. Create Target: Future Returns
+    # We want to predict returns lookahead days into the future
+    df_mi['target_returns'] = df_mi[target_col].pct_change(lookahead).shift(-lookahead)
+    
+    # Drop rows where EXPECTED TARGET is NaN (e.g. at the end of the series)
+    df_mi = df_mi.dropna(subset=['target_returns'])
+    
+    if df_mi.empty:
+        return pd.DataFrame(columns=['Feature', 'MI_Score', 'Raw_MI'])
+
+    # 2. Setup
+    features = [c for c in df_mi.columns if c not in ['date', target_col, 'target_returns']]
+    mi_scores = []
+    
+    # Pre-calculate Global Discretized Target (for common index, but we might need to re-align per feature)
+    # Actually, simpler to do it inside the loop to match indices perfectly.
+    
+    N_global = len(df_mi)
+    
+    # 3. Calculate MI for each feature
+    for feature in features:
+        try:
+            # Subset valid data for this specific pair
+            df_pair = df_mi[[feature, 'target_returns']].dropna()
+            
+            if len(df_pair) < bins:
+                 # print(f"DEBUG: Skipping {feature} - not enough data points ({len(df_pair)})")
+                 continue
+
+            # Discretize Feature (Equal-Frequency)
+            x_discrete = pd.qcut(df_pair[feature], q=bins, labels=False, duplicates='drop')
+            
+            # Discretize Target (on the same subset)
+            try:
+                y_discrete = pd.qcut(df_pair['target_returns'], q=bins, labels=False, duplicates='drop')
+            except ValueError:
+                y_discrete = pd.cut(df_pair['target_returns'], bins=bins, labels=False)
+            
+            # Calculate Raw MI
+            mi = mutual_info_score(x_discrete, y_discrete)
+            
+            # 4. Miller-Madow Bias Correction
+            # MM_correction = (R-1)(C-1) / (2N)
+            N = len(df_pair)
+            R = len(np.unique(x_discrete))
+            C = len(np.unique(y_discrete))
+            
+            correction = ((R - 1) * (C - 1)) / (2 * N)
+            mi_adjusted = mi - correction
+            
+            # Clamp to 0
+            mi_final = max(0, mi_adjusted)
+            
+            mi_scores.append({
+                'Feature': feature,
+                'MI_Score': mi_final,
+                'Raw_MI': mi,
+                'Samples': N # Useful debug info
+            })
+            
+        except Exception as e:
+            print(f"Error calculating MI for {feature}: {e}")
+            mi_scores.append({
+                'Feature': feature,
+                'MI_Score': 0,
+                'Raw_MI': 0,
+                'Samples': 0
+            })
+
+    # Create Result DataFrame
+    mi_df = pd.DataFrame(mi_scores)
+    mi_df = mi_df.sort_values('MI_Score', ascending=False).reset_index(drop=True)
+    
+    return mi_df
 
 def calculate_correlation(df, target_col='close', threshold=0.95):
     """

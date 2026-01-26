@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
 import plotly.io as pio
 from plotly.subplots import make_subplots
 from datetime import datetime, date, timedelta
@@ -49,124 +50,187 @@ app_mode = st.sidebar.radio("Mode", ["Dashboard", "Feature Analysis"], index=0)
 
 if app_mode == "Feature Analysis":
     st.title("Feature Reduction Analysis")
-    st.markdown("### Stage 1: Pearson Correlation Filter")
-    
     # Date Selection for Analysis
     col_fa1, col_fa2 = st.columns(2)
     with col_fa1:
         start_date_fa = st.date_input("Start Date", date(2018, 1, 1), key="fa_start")
     with col_fa2:
         end_date_fa = st.date_input("End Date", date.today(), key="fa_end")
-        
-    # Session State for Analysis Results
-    if 'fa_results' not in st.session_state:
-        st.session_state.fa_results = None
 
-    threshold = st.slider("Correlation Threshold", 0.8, 1.0, 0.95, 0.01, help="Features with correlation higher than this will be flagged.")
-    
-    if st.button("Load Data & Calculate Correlation", type="primary"):
-        with st.spinner("Loading data and calculating correlations..."):
-            start_str_fa = start_date_fa.strftime('%Y-%m-%d')
-            end_str_fa = end_date_fa.strftime('%Y-%m-%d')
+    # Stage 1 Expander
+    with st.expander("Stage 1: Pearson Correlation Analysis (Linear Dependency)", expanded=True):
+        st.markdown("### Stage 1: Pearson Correlation Filter")
+        
+        # Session State for Analysis Results
             
-            # Get DataFrame directly
-            df_raw, _ = matrix_strategy.get_strategy_df(start_str_fa, end_str_fa, asset="btc")
-            
-            # --- FEATURE SELECTION: Filter by 'test' set ---
-            df_categories = database.read_categories()
-            test_metrics, _ = database.load_category_list('test', metric='', df=df_categories)
-            
-            # Ensure we keep date and close (for reference) and test metrics
-            cols_to_keep = ['date', 'close'] + [col for col in test_metrics if col in df_raw.columns]
-            
-            # Identify missing requested metrics for debug
-            missing_requested = [col for col in test_metrics if col not in df_raw.columns]
-            
-            with st.expander("Debug Info: Feature Selection Details"):
-                st.write(f"**Total DF Columns:** {len(df_raw.columns)}")
-                st.write(f"**Requested 'Test' Metrics:** {len(test_metrics)}")
-                if missing_requested:
-                    st.error(f"**Requested but Missing in Data ({len(missing_requested)}):** {missing_requested}")
+        # Session State for Analysis Results
+        if 'fa_results' not in st.session_state:
+            st.session_state.fa_results = None
+
+        threshold = st.slider("Correlation Threshold", 0.8, 1.0, 0.95, 0.01, help="Features with correlation higher than this will be flagged.")
+        
+        if st.button("Load Data & Calculate Correlation", type="primary"):
+            with st.spinner("Loading data and calculating correlations..."):
+                start_str_fa = start_date_fa.strftime('%Y-%m-%d')
+                end_str_fa = end_date_fa.strftime('%Y-%m-%d')
+                
+                # Get DataFrame directly
+                df_raw, _ = matrix_strategy.get_strategy_df(start_str_fa, end_str_fa, asset="btc")
+                
+                # --- FEATURE SELECTION: Filter by 'test' set ---
+                df_categories = database.read_categories()
+                test_metrics, _ = database.load_category_list('test', metric='', df=df_categories)
+                
+                # Ensure we keep date and close (for reference) and test metrics
+                cols_to_keep = ['date', 'close'] + [col for col in test_metrics if col in df_raw.columns]
+                
+                # Identify missing requested metrics for debug
+                missing_requested = [col for col in test_metrics if col not in df_raw.columns]
+                
+                with st.expander("Debug Info: Feature Selection Details"):
+                    st.write(f"**Total DF Columns:** {len(df_raw.columns)}")
+                    st.write(f"**Requested 'Test' Metrics:** {len(test_metrics)}")
+                    if missing_requested:
+                        st.error(f"**Requested but Missing in Data ({len(missing_requested)}):** {missing_requested}")
+                    else:
+                        st.success("All requested 'test' metrics found in data.")
+                    
+                    st.write("**Columns available in Data:**")
+                    st.write(sorted(df_raw.columns.tolist()))
+                
+                if len(cols_to_keep) > 2: 
+                     df_raw = df_raw[cols_to_keep]
+                     st.toast(f"Filtered to {len(cols_to_keep)-2} features from 'test' category.", icon="✅")
                 else:
-                    st.success("All requested 'test' metrics found in data.")
+                     st.warning("No features found in 'test' category matching the data. Using all available features.")
+
+                # Prepare for correlation: Drop 'date' and 'close'
+                df_for_corr = df_raw.drop(columns=['date', 'close'], errors='ignore')
+
+                # Filter numeric and calculate correlation
+                corr_matrix = feature_analysis.calculate_correlation(df_for_corr)
                 
-                st.write("**Columns available in Data:**")
-                st.write(sorted(df_raw.columns.tolist()))
+                # Store in session state
+                st.session_state.fa_results = {
+                    'corr_matrix': corr_matrix,
+                    'df_raw_columns': df_for_corr.columns.tolist() # Only feature columns
+                }
+                
+        # Display Results if Available
+        if st.session_state.fa_results:
+            corr_matrix = st.session_state.fa_results['corr_matrix']
+            df_raw_columns = st.session_state.fa_results['df_raw_columns'] 
             
-            if len(cols_to_keep) > 2: 
-                 df_raw = df_raw[cols_to_keep]
-                 st.toast(f"Filtered to {len(cols_to_keep)-2} features from 'test' category.", icon="✅")
+            # Identify high correlations (Dynamic based on slider)
+            pairs, to_drop = feature_analysis.identify_high_correlation_features(corr_matrix, threshold)
+            
+            # Sorting for visualization: Alphabetical
+            sorted_cols = sorted(corr_matrix.columns)
+            corr_matrix_sorted = corr_matrix.loc[sorted_cols, sorted_cols]
+            
+            # --- Visualizatons ---
+            st.subheader("Correlation Heatmap")
+            fig_heatmap = feature_analysis.create_heatmap(corr_matrix_sorted)
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+            
+            # --- Results ---
+            st.subheader(f"High Correlation Pairs (|r| > {threshold})")
+            if pairs:
+                df_pairs = pd.DataFrame(pairs, columns=['Feature 1', 'Feature 2', 'Correlation'])
+                # Sort by absolute correlation desc
+                df_pairs['Abs Corr'] = df_pairs['Correlation'].abs()
+                df_pairs = df_pairs.sort_values('Abs Corr', ascending=False).drop(columns=['Abs Corr'])
+                
+                col_res1, col_res2 = st.columns([2, 1])
+                with col_res1:
+                    st.dataframe(df_pairs, use_container_width=True)
+                
+                with col_res2:
+                    st.markdown("#### Suggested to Drop")
+                    st.warning(f"Found {len(to_drop)} features to potential drop.")
+                    st.write(to_drop)
+                    
+                    # Download Filtered List
+                    remaining_features = [c for c in df_raw_columns if c not in to_drop and c in corr_matrix.columns]
+                    df_remaining = pd.DataFrame(remaining_features, columns=['Kept Features'])
+                    
+                    st.download_button(
+                        label="Download Kept Features List",
+                        data=df_remaining.to_csv(index=False),
+                        file_name="bier_kept_features.csv",
+                        mime="text/csv"
+                    )
+
             else:
-                 st.warning("No features found in 'test' category matching the data. Using all available features.")
-
-            # Prepare for correlation: Drop 'date' and 'close'
-            df_for_corr = df_raw.drop(columns=['date', 'close'], errors='ignore')
-
-            # Filter numeric and calculate correlation
-            corr_matrix = feature_analysis.calculate_correlation(df_for_corr)
+                st.success("No features found exceeding the correlation threshold.")
             
-            # Store in session state
-            st.session_state.fa_results = {
-                'corr_matrix': corr_matrix,
-                'df_raw_columns': df_for_corr.columns.tolist() # Only feature columns
-            }
-            
-    # Display Results if Available
-    if st.session_state.fa_results:
-        corr_matrix = st.session_state.fa_results['corr_matrix']
-        df_raw_columns = st.session_state.fa_results['df_raw_columns'] 
+            # --- Downloads ---
+            st.markdown("---")
+            st.download_button(
+                label="Download Correlation Matrix (CSV)",
+                data=corr_matrix.to_csv(),
+                file_name="bier_correlation_matrix.csv",
+                mime="text/csv"
+            )
         
-        # Identify high correlations (Dynamic based on slider)
-        pairs, to_drop = feature_analysis.identify_high_correlation_features(corr_matrix, threshold)
+    # Stage 2 Expander
+    with st.expander("Stage 2: Mutual Information Ranking (Nonlinear Capture)", expanded=True):
+        st.markdown("### Stage 2: Mutual Information Ranking (Nonlinear Capture)")
         
-        # Sorting for visualization: Alphabetical
-        sorted_cols = sorted(corr_matrix.columns)
-        corr_matrix_sorted = corr_matrix.loc[sorted_cols, sorted_cols]
+        col_mi1, col_mi2, col_mi3 = st.columns(3)
+        with col_mi1:
+            mi_lookahead = st.selectbox("Target Lookahead (Days)", [7, 14, 30, 90], index=1, help="Calculate returns X days into the future as the target.")
+        with col_mi2:
+            mi_bins = st.number_input("Bins (Equal-Frequency)", min_value=10, max_value=100, value=50, step=10, help="Number of bins for discretization.")
         
-        # --- Visualizatons ---
-        st.subheader("Correlation Heatmap")
-        fig_heatmap = feature_analysis.create_heatmap(corr_matrix_sorted)
-        st.plotly_chart(fig_heatmap, use_container_width=True)
-        
-        # --- Results ---
-        st.subheader(f"High Correlation Pairs (|r| > {threshold})")
-        if pairs:
-            df_pairs = pd.DataFrame(pairs, columns=['Feature 1', 'Feature 2', 'Correlation'])
-            # Sort by absolute correlation desc
-            df_pairs['Abs Corr'] = df_pairs['Correlation'].abs()
-            df_pairs = df_pairs.sort_values('Abs Corr', ascending=False).drop(columns=['Abs Corr'])
-            
-            col_res1, col_res2 = st.columns([2, 1])
-            with col_res1:
-                st.dataframe(df_pairs, use_container_width=True)
-            
-            with col_res2:
-                st.markdown("#### Suggested to Drop")
-                st.warning(f"Found {len(to_drop)} features to potential drop.")
-                st.write(to_drop)
-                
-                # Download Filtered List
-                remaining_features = [c for c in df_raw_columns if c not in to_drop and c in corr_matrix.columns]
-                df_remaining = pd.DataFrame(remaining_features, columns=['Kept Features'])
-                
-                st.download_button(
-                    label="Download Kept Features List",
-                    data=df_remaining.to_csv(index=False),
-                    file_name="bier_kept_features.csv",
-                    mime="text/csv"
-                )
-
-        else:
-            st.success("No features found exceeding the correlation threshold.")
-        
-        # --- Downloads ---
-        st.markdown("---")
-        st.download_button(
-            label="Download Correlation Matrix (CSV)",
-            data=corr_matrix.to_csv(),
-            file_name="bier_correlation_matrix.csv",
-            mime="text/csv"
-        )
+        if st.button("Run Mutual Information Ranking", type="primary"):
+            if 'fa_results' not in st.session_state or st.session_state.fa_results is None:
+                 st.error("Please run the Correlation Analysis (Stage 1) first to load the data.")
+            else:
+                 with st.spinner(f"Calculating MI Scores (This may take a moment)..."):
+                     # Re-fetch data from session state columns or just reload? 
+                     # Better to reload to ensure we have the full DF for returns calculation if needed
+                     # Actually, we have the columns list, but not the full DF in session state to save memory.
+                     # Let's reload using the same date parameters.
+                     start_str_fa = start_date_fa.strftime('%Y-%m-%d')
+                     end_str_fa = end_date_fa.strftime('%Y-%m-%d')
+                     df_full, _ = matrix_strategy.get_strategy_df(start_str_fa, end_str_fa, asset="btc")
+                     
+                     # Apply Metric Filtering (Same as Stage 1)
+                     df_categories = database.read_categories()
+                     test_metrics, _ = database.load_category_list('test', metric='', df=df_categories)
+                     cols_to_keep = ['date', 'close'] + [col for col in test_metrics if col in df_full.columns]
+                     df_mi_input = df_full[cols_to_keep].copy()
+                     
+                     # Calculate MI
+                     mi_results = feature_analysis.calculate_mi_ranking(df_mi_input, target_col='close', lookahead=mi_lookahead, bins=mi_bins)
+                     
+                     # Visualization
+                     st.subheader("Feature Importance (Mutual Information)")
+                     
+                     # Bar Chart
+                     fig_mi = px.bar(
+                         mi_results.head(40), # Top 40
+                         x='MI_Score',
+                         y='Feature',
+                         orientation='h',
+                         title=f'Top 40 Features by Mutual Information (Target: {mi_lookahead}d Returns)',
+                         color='MI_Score',
+                         color_continuous_scale='Viridis'
+                     )
+                     fig_mi.update_layout(yaxis=dict(autorange="reversed"), height=800)
+                     st.plotly_chart(fig_mi, use_container_width=True)
+                     
+                     # Table
+                     st.dataframe(mi_results, use_container_width=True)
+                     
+                     # Download
+                     st.download_button(
+                        label="Download MI Ranking (CSV)",
+                        data=mi_results.to_csv(index=False),
+                        file_name=f"bier_mi_ranking_{mi_lookahead}d.csv",
+                        mime="text/csv"
+                     )
 
 # Only show Dashboard controls if in Dashboard mode
 if app_mode == "Dashboard":
