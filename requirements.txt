@@ -7,3 +7,8 @@ scipy
 psycopg2-binary
 requests
 backtesting
+scikit-learn
+statsmodels
+Boruta
+hmmlearn
+xgboost
