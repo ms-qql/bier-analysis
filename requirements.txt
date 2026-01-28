@@ -12,3 +12,4 @@ statsmodels
 Boruta
 hmmlearn
 xgboost
+matplotlib
