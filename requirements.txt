@@ -7,3 +7,5 @@ scipy
 psycopg2-binary
 requests
 
+
+backtesting
