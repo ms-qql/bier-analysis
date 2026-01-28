@@ -1,9 +1,4 @@
-import anvil.email
-import anvil.users
-import anvil.tables as tables
-import anvil.tables.query as q
-from anvil.tables import app_tables
-import anvil.server
+
 
 import datetime
 from datetime import datetime, timezone, timedelta
@@ -98,8 +93,7 @@ def login_and_get_session():
 
 # ----------------------------- Auto Import BMP Data -------------------------------------------------------------
 
-@anvil.server.background_task
-@anvil.server.callable
+
 def auto_import_bmp_data():
 
     session = login_and_get_session()

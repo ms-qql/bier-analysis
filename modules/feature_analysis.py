@@ -16,7 +16,10 @@ from sklearn.ensemble import RandomForestRegressor
 from boruta import BorutaPy
 from statsmodels.tsa.stattools import acf, pacf
 from sklearn.mixture import GaussianMixture
+from hmmlearn import hmm
 from sklearn.preprocessing import StandardScaler
+from xgboost import XGBRegressor
+from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.ensemble import RandomForestRegressor
 from boruta import BorutaPy
 
@@ -573,4 +576,440 @@ def detect_market_regimes(df, method="technical", ma_fast=50, ma_slow=200):
         else:
             df['Regime'] = 'Neutral' # Not enough data
             
+    elif method == "hmm":
+        # Hidden Markov Model
+        # Features: Log Returns and Volatility
+        df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
+        df['vol_20'] = df['log_ret'].rolling(20).std()
+        df['ret_20'] = df['log_ret'].rolling(20).mean()
+        
+        # Drop NaNs
+        data = df[['vol_20', 'ret_20']].dropna()
+        
+        if len(data) > 100:
+            # HMM with 3 components (Bull, Bear, Neutral)
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(data)
+            
+            # HMM with 3 components (Bull, Bear, Neutral)
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(data)
+            
+            # HMM Tuning:
+            # 1. covariance_type="full": Restore correlation modeling for better Bull/Bear separation.
+            # 2. transmat_prior: "Sticky" Prior. Encourage staying in same state (diagonal) 
+            #    to fix flickering (alternating days) without breaking the model structure.
+            #    Matrix [[10, 1, 1], [1, 10, 1], ..] adds 10 "pseudo-observations" of self-transition.
+            
+            n_components = 3
+            sticky_prior = np.eye(n_components) * 10.0 + 1.0 
+            
+            model = hmm.GaussianHMM(
+                n_components=n_components, 
+                covariance_type="full", 
+                n_iter=1000, 
+                random_state=42,
+                min_covar=1e-3,
+                transmat_prior=sticky_prior
+            )
+            model.fit(X_scaled)
+            labels = model.predict(X_scaled)
+            
+            # Map labels to meaningful names based on mean returns/vol of each state
+            data['state'] = labels
+            
+            # We classify based on Returns primarily
+            # Bull = Highest Returns
+            # Bear = Lowest Returns (often High Vol)
+            # Neutral = In between (often Low Vol)
+            state_means = data.groupby('state')['ret_20'].mean()
+            
+            # Sort: Index 0=Highest(Bull), 1=Mid(Neutral), 2=Lowest(Bear)
+            sorted_states = state_means.sort_values(ascending=False).index.tolist()
+            
+            label_map = {
+                sorted_states[0]: 'Bull',
+                sorted_states[1]: 'Neutral',
+                sorted_states[2]: 'Bear'
+            }
+            
+            data['Regime'] = data['state'].map(label_map)
+            df.loc[data.index, 'Regime'] = data['Regime']
+        else:
+            df['Regime'] = 'Neutral' # Not enough data
+            
     return df['Regime']
+
+def analyze_regime_specific_importance(df, target_col='close', lookahead=5, regimes_col='Regime'):
+    """
+    Stage 7: Comparative Feature Importance across Regimes.
+    Runs Boruta on subsets of data defined by the regime column.
+    """
+    df = df.copy()
+    
+    # 1. Create Target (Global calculation to preserve shifts)
+    df['target_returns'] = df[target_col].pct_change(lookahead).shift(-lookahead)
+    df = df.dropna(subset=['target_returns', regimes_col])
+    
+    # Identify Regimes
+    regimes = df[regimes_col].unique()
+    
+    # Identify Features
+    feature_cols = [c for c in df.columns if c not in [target_col, 'target_returns', 'date', 'Regime', 'regime', regimes_col, 'sma_fast', 'sma_slow', 'cluster', 'log_ret', 'vol_20', 'ret_20']]
+    # Filter only numeric features
+    feature_cols = df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
+    
+    results = {}
+    
+    # Global Run
+    print(f"DEBUG: Running Global Boruta...")
+    rank_global = _run_boruta_dynamic(df, feature_cols, 'target_returns')
+    results['Global'] = rank_global
+    
+    # Per Regime Run
+    for regime in regimes:
+        print(f"DEBUG: Running Boruta for Regime: {regime}")
+        df_subset = df[df[regimes_col] == regime].copy()
+        
+        if len(df_subset) < 50:
+            print(f"DEBUG: Skipping regime {regime} - Not enough samples ({len(df_subset)})")
+            continue
+            
+        rank_regime = _run_boruta_dynamic(df_subset, feature_cols, 'target_returns')
+        results[regime] = rank_regime
+        
+    # Compile Comparison DataFrame
+    # Features as Index, Columns as Ranks
+    comparison_df = pd.DataFrame(index=feature_cols)
+    
+    for name, rankings in results.items():
+        comparison_df[name + '_Rank'] = rankings
+        
+    # Fill missing ranks (features skipped due to low coverage) with 99
+    comparison_df = comparison_df.fillna(99)
+        
+    return comparison_df
+
+def _run_boruta_dynamic(df, candidate_features, target_col):
+    """
+    Runs Boruta on a dynamic subset of features that have good coverage.
+    """
+    if len(df) < 20:
+        return pd.Series([99]*len(candidate_features), index=candidate_features)
+        
+    # 1. Determine Feature Coverage
+    # Calculate non-null percentage for each feature
+    coverage = df[candidate_features].count() / len(df)
+    
+    # Keep features with > 70% coverage (relaxed from 80% to ensure we get something)
+    valid_feats = coverage[coverage > 0.7].index.tolist()
+    
+    print(f"DEBUG: {len(valid_feats)} / {len(candidate_features)} features passed coverage check (>70%).")
+    
+    if not valid_feats:
+        print("DEBUG: No features passed coverage check.")
+        return pd.Series([99]*len(candidate_features), index=candidate_features)
+        
+    # 2. Filter data
+    # Only dropna on valid_feats
+    df_clean = df.dropna(subset=valid_feats + [target_col])
+    
+    print(f"DEBUG: Samples after dropna: {len(df_clean)} (Original: {len(df)})")
+    
+    if len(df_clean) < 20:
+        print("DEBUG: Too few samples after dropping NaNs.")
+        return pd.Series([99]*len(candidate_features), index=candidate_features)
+        
+    X = df_clean[valid_feats].values
+    y = df_clean[target_col].values
+    
+    if np.std(y) == 0:
+         print("DEBUG: Constant target.")
+         return pd.Series([99]*len(candidate_features), index=candidate_features)
+
+    # 3. Run Boruta
+    rf = RandomForestRegressor(n_jobs=-1, max_depth=10, n_estimators=100) # Balanced
+    feat_selector = BorutaPy(rf, n_estimators='auto', verbose=0, random_state=42, max_iter=80)
+    
+    try:
+        feat_selector.fit(X, y)
+        ranks = feat_selector.ranking_
+        # Map back to full list
+        # valid_feats -> rank
+        # others -> 99
+        rank_series = pd.Series(ranks, index=valid_feats)
+        return rank_series.reindex(candidate_features, fill_value=99)
+        
+    except Exception as e:
+        print(f"Boruta Failed: {e}")
+        return pd.Series([99]*len(candidate_features), index=candidate_features)
+
+def train_eval_xgboost(df, feature_cols, target_col='close', lookahead=5, test_size=0.2):
+    """
+    Stage 8: XGBoost Validation.
+    Trains a model on the first (1-test_size)% and tests on the last test_size%.
+    """
+    df = df.copy()
+    
+    # 1. Prepare Target
+    df['target_returns'] = df[target_col].pct_change(lookahead).shift(-lookahead)
+    
+    # 2. Clean Data
+    # Drop rows where target or features are NaN
+    # We must ensure we don't accidentally look ahead, but dropna() is row-wise so it's fine.
+    # Note: Shift(-lookahead) puts future value in current row. So last 'lookahead' rows are NaN.
+    
+    # Check coverage of features first
+    # If a feature is 100% NaN, XGBoost handles it, but better to warn or drop?
+    # For now, we assume user selected good features in previous stages.
+    
+    df_clean = df.dropna(subset=feature_cols + ['target_returns'])
+    
+    if len(df_clean) < 100:
+        return None, None, pd.DataFrame() # Not enough data
+        
+    X = df_clean[feature_cols]
+    y = df_clean['target_returns']
+    dates = df_clean['date'] if 'date' in df_clean.columns else df_clean.index
+    
+    # 3. Time Series Split
+    split_idx = int(len(X) * (1 - test_size))
+    
+    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+    dates_test = dates[split_idx:]
+    
+    # 4. Train
+    model = XGBRegressor(
+        n_estimators=500, 
+        learning_rate=0.05, 
+        max_depth=5, 
+        early_stopping_rounds=50,
+        n_jobs=-1,
+        random_state=42
+    )
+    
+    # XGBoost requires eval set for early stopping
+    model.fit(
+        X_train, y_train, 
+        eval_set=[(X_train, y_train), (X_test, y_test)], 
+        verbose=False
+    )
+    
+    # 5. Predict
+    preds = model.predict(X_test)
+    
+    # 6. Evaluation Metrics
+    mse = mean_squared_error(y_test, preds)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(y_test, preds)
+    
+    # Directional Accuracy
+    # Sign of Actual vs Sign of Predicted (0 is ignored or treated as pos)
+    actual_dir = np.sign(y_test)
+    pred_dir = np.sign(preds)
+    
+    # Handle zeros: if actual is 0, any prediction is technically wrong direction or neutral?
+    # Simple match:
+    matches = (actual_dir == pred_dir)
+    dir_acc = matches.mean()
+    
+    metrics = {
+        'RMSE': rmse,
+        'R2': r2,
+        'Directional Accuracy': dir_acc,
+        'Train Samples': len(X_train),
+        'Test Samples': len(X_test)
+    }
+    
+    # 7. Feature Importance
+    importance = pd.DataFrame({
+        'Feature': feature_cols,
+        'Importance': model.feature_importances_
+    }).sort_values('Importance', ascending=False)
+    
+    # 8. Results DataFrame for Plotting
+    results_df = pd.DataFrame({
+        'date': dates_test,
+        'Actual': y_test,
+        'Predicted': preds,
+        # Simple Strategy Returns: If Pred > 0, go Long. Else flat (or Short?)
+        # Let's do Long-Only for simplicity: Returns = Actual * sign(Pred)
+        'Strategy_Returns': y_test * np.sign(preds) 
+    })
+    
+    return metrics, importance, results_df
+
+def train_regime_switching_xgboost(
+    df, 
+    base_feature_cols, 
+    regime_ranks, 
+    significant_lags=None, 
+    target_col='close', 
+    regime_col='Regime', 
+    lookahead=5, 
+    test_size=0.2,
+    top_n_features=20
+):
+    """
+    Stage 8 Enhanced: Regime-Switching XGBoost.
+    Trains Specialist Models (Bull/Bear/Neutral) and switches between them.
+    
+    Args:
+        df: Full DataFrame.
+        base_feature_cols: List of base features (evaluated in Stage 7).
+        regime_ranks: DataFrame from Stage 7 (index=feature, cols=[Bull_Rank, etc.]).
+        significant_lags: List of lags [1, 7, 30] from Stage 5.
+        
+    Returns:
+        metrics, feature_importances (dict of dfs), results_df
+    """
+    df = df.copy()
+    
+    # 1. Feature Engineering: Add Momentum from Significant Lags
+    mom_cols = []
+    if significant_lags:
+        for lag in significant_lags:
+            col_name = f'mom_{lag}d'
+            df[col_name] = df[target_col].pct_change(lag)
+            mom_cols.append(col_name)
+            
+    # 2. Prepare Target
+    df['target_returns'] = df[target_col].pct_change(lookahead).shift(-lookahead)
+    
+    # 3. Clean Data
+    # Must have Target + Regime + Base Features + Mom Features
+    potential_cols = base_feature_cols + mom_cols + [regime_col, 'target_returns', 'date']
+    if 'date' not in df.columns:
+        df['date'] = df.index
+        
+    # Careful dropna: 
+    # Stage 7 might have features that are sparse. 
+    # Use dynamic dropna similar to before? 
+    # Ideally we only drop rows missing the specific features we *use* for that model.
+    # But for simplicity of Train/Test split alignment, let's try to keep a common core.
+    
+    # Let's dropna on Target and Regime first
+    df = df.dropna(subset=['target_returns', regime_col])
+    
+    # 4. Time Series Split (Global Indices)
+    # We split strictly by time first, then filter by regime inside segments
+    split_idx = int(len(df) * (1 - test_size))
+    dates = df['date']
+    
+    train_df = df.iloc[:split_idx]
+    test_df = df.iloc[split_idx:]
+    
+    # 5. Train Specialist Models
+    models = {}
+    importances = {}
+    regimes = ['Bull', 'Bear', 'Neutral'] # default keys
+    
+    # Global fallback model (in case a regime is empty in train set)
+    # Train strict Global model on ALL features (base + mom)? 
+    # Or just top features? Let's use Top N global ranks if available, or just all.
+    # We'll rely on global fallback if specific model fails.
+    
+    for regime in regimes:
+        # A. Define Features for this Regime
+        # 1. Momentum Features (Always included as High Signal)
+        final_features = list(mom_cols)
+        
+        # 2. Select Top N Base Features for this Regime
+        if regime_ranks is not None and f'{regime}_Rank' in regime_ranks.columns:
+            # Sort by rank and take top N
+            ranks = regime_ranks[f'{regime}_Rank'].sort_values()
+            # Filter valid (Rank < 99)
+            valid_ranks = ranks[ranks < 50] # Top 50 reasonable limit
+            top_base = valid_ranks.head(top_n_features).index.tolist()
+            # Ensure they exist in df
+            top_base = [f for f in top_base if f in df.columns]
+            final_features += top_base
+        else:
+            # Fallback: Use all base features if no rankings
+            final_features += [f for f in base_feature_cols if f in df.columns]
+            
+        # Deduplicate
+        final_features = list(set(final_features))
+        
+        # B. Filter Train Data for this Regime
+        regime_train = train_df[train_df[regime_col] == regime].dropna(subset=final_features)
+        
+        if len(regime_train) < 50:
+            print(f"DEBUG: Not enough Train data for Regime {regime} ({len(regime_train)}).")
+            models[regime] = None
+            continue
+            
+        # C. Train Model
+        X_reg = regime_train[final_features]
+        y_reg = regime_train['target_returns']
+        
+        model = XGBRegressor(n_estimators=200, max_depth=6, learning_rate=0.05, n_jobs=-1, random_state=42)
+        model.fit(X_reg, y_reg)
+        models[regime] = (model, final_features)
+        
+        # D. Store Importance
+        imp_df = pd.DataFrame({'Feature': final_features, 'Importance': model.feature_importances_})
+        imp_df['Regime'] = regime
+        importances[regime] = imp_df.sort_values('Importance', ascending=False)
+        
+    # 6. Predict (Dynamic Switching)
+    # Iterate through Test Set row by row (or vectorise by grouping)
+    # Grouping is faster.
+    
+    test_df = test_df.copy()
+    test_df['Predicted'] = np.nan
+    test_df['Active_Model'] = 'None'
+    
+    for regime in regimes:
+        if regime not in models or models[regime] is None:
+            continue
+            
+        model, feats = models[regime]
+        
+        # Identify rows in Test Set belonging to this regime
+        # AND having valid data for the specific features needed
+        mask = (test_df[regime_col] == regime) & (test_df[feats].notna().all(axis=1))
+        
+        if mask.sum() > 0:
+            X_test_subset = test_df.loc[mask, feats]
+            preds = model.predict(X_test_subset)
+            test_df.loc[mask, 'Predicted'] = preds
+            test_df.loc[mask, 'Active_Model'] = regime
+            
+    # Fallback/Fillna?
+    # If a row was dropped due to missing features or missing regime model, it stays NaN.
+    # We drop these for evaluation.
+    test_results = test_df.dropna(subset=['Predicted'])
+    
+    if len(test_results) == 0:
+        return None, None, pd.DataFrame()
+        
+    # 7. Metrics
+    mse = mean_squared_error(test_results['target_returns'], test_results['Predicted'])
+    rmse = np.sqrt(mse)
+    r2 = r2_score(test_results['target_returns'], test_results['Predicted'])
+    
+    actual_dir = np.sign(test_results['target_returns'])
+    pred_dir = np.sign(test_results['Predicted'])
+    dir_acc = (actual_dir == pred_dir).mean()
+    
+    metrics = {
+        'RMSE': rmse,
+        'R2': r2,
+        'Directional Accuracy': dir_acc,
+        'Test Coverage': len(test_results) / len(test_df) # How many days we could actually predict
+    }
+    
+    # Combine Importances per Regime for display?
+    # Or return dict. Return dict is better for UI tabs.
+    
+    results_out = pd.DataFrame({
+        'date': test_results['date'],
+        'Actual': test_results['target_returns'],
+        'Predicted': test_results['Predicted'],
+        'Regime': test_results[regime_col],
+        'Strategy_Returns': test_results['target_returns'] * np.sign(test_results['Predicted'])
+    })
+    
+    return metrics, importances, results_out

@@ -1,4 +1,4 @@
-import anvil.server
+
 
 import numpy as np
 import pandas as pd
@@ -57,7 +57,6 @@ class Matrix(TrailingStrategy):
 #bt_plot.plot()
 
 
-@anvil.server.callable
 def save_backtest_score(calc_json, asset, use_signal, category, risk_weight, market_weight, mining_weight, macro_weight, sentiment_weight, hodl_weight, shortterm_weight, custom_weight, single_weight, metric):  
   df = pd.read_json(calc_json, orient='records')
   # --------------- signals ------------------------------  
@@ -154,7 +153,7 @@ def create_backtest_bier_df(df_bt):
     return df_bt
 
 
-@anvil.server.callable
+
 def perform_backtest_bier(df_bt, name):
 
     #df_bt = pd.read_json(df_json, orient='records')
@@ -247,7 +246,6 @@ def perform_backtest_bier(df_bt, name):
     fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='silver',zeroline=True, zerolinewidth=2, zerolinecolor='silver')
     return fig.to_json() 
 
-@anvil.server.callable
 def get_backtest_stats(start_date, end_date, asset, okx_data, strategy_selected):
     #print(f" Start: {start_date}, end: {end_date} for {asset} with OKX {okx_data}")
     strategy = 'score_' + strategy_selected # selected strategy for backtest
@@ -335,7 +333,6 @@ def  get_backtest_stats_dict(df_bt, allow_short=False):
             'calmar': 0.0
         }
 
-@anvil.server.callable
 def run_batch_backtest(start_date, end_date, asset, signal_strategy, use_alt_signal, alt_signal_deviation, allow_short=False, max_combination_size=MAX_COMBI_SIZE):
     """
     Batch backtest for all metrics with 'test=1' in database.

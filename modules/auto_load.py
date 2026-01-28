@@ -1,9 +1,4 @@
-import anvil.email
-import anvil.users
-import anvil.tables as tables
-import anvil.tables.query as q
-from anvil.tables import app_tables
-import anvil.server
+
 
 import datetime
 from datetime import datetime, timezone, timedelta
@@ -57,8 +52,7 @@ def iso_to_unix(iso_time_str):
 
 # ----------------------------- All data -------------------------------------------------------------
 
-@anvil.server.background_task
-@anvil.server.callable
+
 def auto_import_all_data():
     # Load all data
     try:
@@ -88,8 +82,7 @@ def auto_import_all_data():
 
 # ----------------------------- ITC -------------------------------------------------------------
 
-@anvil.server.background_task
-@anvil.server.callable
+
 def auto_import_itc_data():
 
     base_url ='https://app.intothecryptoverse.com/api/v2/'
@@ -178,8 +171,7 @@ def auto_import_itc_data():
     return
 
 
-@anvil.server.background_task
-@anvil.server.callable
+
 def auto_import_itc_oi_data():
   # Load Macro Index
   df_data = query_itc_oi_data('future') # Load OI Future data
@@ -268,8 +260,7 @@ def query_itc_oi_data(market = 'future'):
 # ----------------------------- capriole_btc -------------------------------------------------------------
 
 '''
-@anvil.server.background_task
-@anvil.server.callable
+
 def auto_import_capriole_data():
 
   # Load Macro Index
@@ -368,8 +359,7 @@ def query_capriole_data(file_name, v_nb):
   return data '''
 
 # ----------------------------- Augmento -------------------------------------------------------------
-@anvil.server.background_task
-@anvil.server.callable
+
 def auto_import_augmento_data():
   # Load Macro Index
   df_augmento = query_augmento_data() # Load Augmento data
